@@ -1,9 +1,11 @@
 import asyncio
 import os
 import asyncpg
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.enums import ParseMode
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import (
+    Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+)
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
@@ -15,7 +17,6 @@ DATABASE_URL = os.getenv("DATABASE_URL").replace("postgresql://", "postgresql+as
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 
-# ID Генерального директора
 DIRECTOR_ID = 1016554091
 
 # Главное меню
@@ -29,6 +30,9 @@ menu = ReplyKeyboardMarkup(keyboard=[
 director_menu = ReplyKeyboardMarkup(keyboard=[
     [KeyboardButton(text="📩 Связь"), KeyboardButton(text="🔙 Назад")]
 ], resize_keyboard=True)
+
+# Подсказка пользователю после нажатия "Связь"
+user_in_contact = set()
 
 async def create_tables(conn):
     await conn.execute("""
@@ -54,6 +58,7 @@ async def start_handler(message: Message):
         async with pool.acquire() as conn:
             await create_tables(conn)
             await get_or_create_user(conn, message.from_user)
+
     await message.answer(f"Добро пожаловать, <b>{message.from_user.full_name}</b>!", reply_markup=menu)
 
 @dp.message(F.text == "👤 Аккаунт")
@@ -92,7 +97,11 @@ async def soon_handler(message: Message):
 
 @dp.message(F.text == "📩 Связь")
 async def contact_handler(message: Message):
-    await message.answer("📝 Оставьте свой вопрос, мы скоро вам ответим.")
+    if message.from_user.id == DIRECTOR_ID:
+        await message.answer("📬 Здесь будут отображаться сообщения от пользователей.", reply_markup=director_menu)
+    else:
+        user_in_contact.add(message.from_user.id)
+        await message.answer("📝 Оставьте свой вопрос, мы скоро вам ответим.")
 
 @dp.message(F.text == "🛠 Управление")
 async def manage_handler(message: Message):
@@ -103,21 +112,34 @@ async def manage_handler(message: Message):
 
 @dp.message(F.text == "🔙 Назад")
 async def back_handler(message: Message):
-    await message.answer("🔙 Возвращение в главное меню.", reply_markup=menu)
-
-@dp.message(F.text == "📩 Связь")
-async def director_contact_handler(message: Message):
     if message.from_user.id == DIRECTOR_ID:
-        await message.answer("📬 Здесь будут отображаться сообщения от пользователей.")
-    else:
-        await contact_handler(message)
+        await message.answer("🔙 Возвращение в главное меню.", reply_markup=menu)
 
+# 👇 Обработка всех входящих сообщений (текст, фото, голос и т.д.)
 @dp.message()
 async def forward_to_director(message: Message):
-    if message.from_user.id != DIRECTOR_ID:
+    if message.from_user.id == DIRECTOR_ID:
+        return  # директор не должен сам себе отправлять
+    if message.from_user.id not in user_in_contact:
+        return  # пользователь не нажал "Связь"
+
+    try:
         sender = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-        caption = f"📨 Сообщение от <b>{sender}</b>:\n"
-        try:
-            await bot.send_message(chat_id=DIRECTOR_ID, text=caption + message.text)
-        except:
-            await message.answer("⚠️ Не удалось отправить сообщение директору.")
+        header = f"📨 <b>Сообщение от:</b> {sender} (ID: <code>{message.from_user.id}</code>)"
+
+        if message.text:
+            await bot.send_message(DIRECTOR_ID, f"{header}\n\n{message.text}")
+        elif message.voice:
+            await bot.send_message(DIRECTOR_ID, header)
+            await bot.send_voice(DIRECTOR_ID, message.voice.file_id)
+        elif message.photo:
+            await bot.send_message(DIRECTOR_ID, header)
+            await bot.send_photo(DIRECTOR_ID, message.photo[-1].file_id, caption=message.caption or "")
+        elif message.document:
+            await bot.send_message(DIRECTOR_ID, header)
+            await bot.send_document(DIRECTOR_ID, message.document.file_id, caption=message.caption or "")
+        else:
+            await bot.send_message(DIRECTOR_ID, f"{header}\n(неизвестный тип сообщения)")
+
+    except Exception as e:
+        await message.answer("⚠️ Не удалось отправить сообщение.")

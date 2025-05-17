@@ -3,10 +3,9 @@ import os
 import asyncpg
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.enums import ParseMode
-from aiogram.types import (
-    Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-)
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import Command  # Импорт нового фильтра для команд
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 
@@ -52,7 +51,7 @@ async def get_or_create_user(conn, user):
             user.id, user.username or ''
         )
 
-@dp.message(commands=["start", "начать"])
+@dp.message(Command("start", "начать"))
 async def start_handler(message: Message):
     async with asyncpg.create_pool(DATABASE_URL) as pool:
         async with pool.acquire() as conn:

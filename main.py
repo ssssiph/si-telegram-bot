@@ -52,14 +52,17 @@ async def get_or_create_user(conn, user):
             user.id, user.username or ''
         )
 
-@dp.message(F.text.in_({"/start", "начать"}))
+@dp.message(commands=["start", "начать"])
 async def start_handler(message: Message):
     async with asyncpg.create_pool(DATABASE_URL) as pool:
         async with pool.acquire() as conn:
             await create_tables(conn)
             await get_or_create_user(conn, message.from_user)
 
-    await message.answer(f"Добро пожаловать, <b>{message.from_user.full_name}</b>!", reply_markup=menu)
+    await message.answer(
+        f"Добро пожаловать, <b>{message.from_user.full_name}</b>!",
+        reply_markup=menu
+    )
 
 @dp.message(F.text == "👤 Аккаунт")
 async def account_handler(message: Message):

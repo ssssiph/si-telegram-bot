@@ -31,6 +31,13 @@ async def create_tables(conn):
     );
     """)
 
+    # Добавим генерального директора вручную
+    user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = 1016554091")
+    if not user:
+        await conn.execute("INSERT INTO users (tg_id, username, rank, balance) VALUES (1016554091, 'siph_director', 'Генеральный директор', 0)")
+    else:
+        await conn.execute("UPDATE users SET rank = 'Генеральный директор' WHERE tg_id = 1016554091")
+
 async def get_or_create_user(conn, user):
     existing = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", user.id)
     if not existing:
@@ -53,13 +60,40 @@ async def account_handler(message: Message):
         async with pool.acquire() as conn:
             user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)
             if user:
+                username = f"@{user['username']}" if user['username'] else "-"
                 await message.answer(
                     f"<b>🧾 Ваш аккаунт:</b>\n"
                     f"ID: <code>{user['tg_id']}</code>\n"
-                    f"Юзернейм: @{user['username']}\n"
+                    f"Имя: {message.from_user.full_name}\n"
+                    f"Юзернейм: {username}\n"
                     f"Ранг: {user['rank']}\n"
                     f"💎 Баланс: {user['balance']}"
                 )
+
+@dp.message(F.text == "🎯 События")
+@dp.message(F.text == "⚙ Настройки")
+async def soon_handler(message: Message):
+    await message.answer("🚧 Скоро...")
+
+@dp.message(F.text == "📩 Связь")
+async def contact_handler(message: Message):
+    async with asyncpg.create_pool(DATABASE_URL) as pool:
+        async with pool.acquire() as conn:
+            user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)
+            if user and user["rank"] in ("Стажёр", "Сотрудник", "Генеральный директор"):
+                await message.answer("📬 Функция связи с персоналом скоро будет добавлена.")
+            else:
+                await message.answer("⛔ Доступ запрещён. Только для стажёров и выше.")
+
+@dp.message(F.text == "🛠 Управление")
+async def manage_handler(message: Message):
+    async with asyncpg.create_pool(DATABASE_URL) as pool:
+        async with pool.acquire() as conn:
+            user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)
+            if user and user["rank"] == "Генеральный директор":
+                await message.answer("🛠 Добро пожаловать в панель управления. (Функции скоро появятся)")
+            else:
+                await message.answer("⛔ Доступ запрещён. Только для Генерального директора.")
 
 async def main():
     await dp.start_polling(bot)

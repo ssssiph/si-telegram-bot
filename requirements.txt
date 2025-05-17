@@ -1,5 +1,3 @@
 aiogram==3.4.1
 python-dotenv
 asyncpg
-SQLAlchemy==2.0.30
-psycopg2-binary

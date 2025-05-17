@@ -59,16 +59,30 @@ async def account_handler(message: Message):
     async with asyncpg.create_pool(DATABASE_URL) as pool:
         async with pool.acquire() as conn:
             user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)
-            if user:
-                username = f"@{user['username']}" if user['username'] else "-"
-                await message.answer(
-                    f"<b>🧾 Ваш аккаунт:</b>\n"
-                    f"ID: <code>{user['tg_id']}</code>\n"
-                    f"Имя: {message.from_user.full_name}\n"
-                    f"Юзернейм: {username}\n"
-                    f"Ранг: {user['rank']}\n"
-                    f"💎 Баланс: {user['balance']}"
+            if not user:
+                await conn.execute(
+                    "INSERT INTO users (tg_id, username) VALUES ($1, $2)",
+                    message.from_user.id, message.from_user.username or ''
                 )
+                await message.answer("🆕 Вы были зарегистрированы. Попробуйте снова.")
+                return
+
+            if message.from_user.username and user['username'] != message.from_user.username:
+                await conn.execute(
+                    "UPDATE users SET username = $1 WHERE tg_id = $2",
+                    message.from_user.username, message.from_user.id
+                )
+
+            username = f"@{user['username']}" if user['username'] else "-"
+            await message.answer(
+                f"<b>🧾 Ваш аккаунт:</b>\n"
+                f"ID: <code>{user['tg_id']}</code>\n"
+                f"Имя: {message.from_user.full_name}\n"
+                f"Юзернейм: {username}\n"
+                f"Ранг: {user['rank']}\n"
+                f"💎 Баланс: {user['balance']}"
+            )
+
 
 @dp.message(F.text == "🎯 События")
 @dp.message(F.text == "⚙ Настройки")

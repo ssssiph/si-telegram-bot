@@ -5,12 +5,14 @@ from database import get_connection
 
 router = Router()
 
-@router.message(F.text.contains("Управление"))
+@router.message(F.text.contains("Управление"))  # Гибкая проверка текста
 async def admin_panel(message: Message):
     conn = await get_connection()
     try:
-        user = await conn.fetchrow("SELECT rank FROM users WHERE tg_id = $1", message.from_user.id)
+        # Проверяем, зарегистрирован ли пользователь
+        user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)
 
+        # Если пользователя нет — добавляем его
         if not user:
             await conn.execute(
                 """
@@ -23,6 +25,7 @@ async def admin_panel(message: Message):
             )
             user = {"rank": "Гость"}
 
+        # Проверяем ранг пользователя
         if user["rank"] != "Генеральный директор":
             await message.answer("❌ У вас нет доступа к управлению.")
             return

@@ -79,17 +79,18 @@ class DiamondsState(StatesGroup):
 # =============================================================================
 @router.message(lambda m: m.chat.type == "private" and m.from_user.id != ADMIN_ID)
 async def handle_incoming_contact(m: Message, state: FSMContext):
-    # Если уже активен FSM, пропускаем
+    # Если уже активен FSM, пропускаем обработку
     if await state.get_state() is not None:
         return
-    # Блокированные пользователи, или пользователи с рангом "Гость", не могут взаимодействовать
+    # Если пользователь заблокирован, отклоняем его запрос
     if await is_user_blocked(m.from_user.id):
         await m.answer("🚫 Отказано в доступе.")
         return
     conn = await get_connection()
     try:
+        # Проверяем, есть ли пользователь в базе и его ранг. Если отсутствует или ранг равен "Гость", отказываем.
         async with conn.cursor() as cur:
-            await cur.execute("SELECT rank FROM users WHERE tg_id = %s", (m.from_user.id,))
+            await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (m.from_user.id,))
             result = await cur.fetchone()
         if result is None or result[0] == "Гость":
             await m.answer("🚫 Отказано в доступе.")
@@ -123,7 +124,8 @@ async def admin_panel(message: Message, state: FSMContext):
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            await cur.execute("SELECT rank FROM users WHERE tg_id = %s", (message.from_user.id,))
+            # Используем `rank` с обратными кавычками (так как rank – зарезервированное слово)
+            await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (message.from_user.id,))
             result = await cur.fetchone()
             if not result:
                 await message.answer("❗ Пользователь не найден. Используйте /start для регистрации.")
@@ -409,7 +411,6 @@ async def event_edit_callback(query: types.CallbackQuery, state: FSMContext):
     conn = await get_connection()
     try:
         async with conn.cursor(DictCursor) as cur:
-            # Выбираем событие по id (убедитесь, что в таблице events есть поле id)
             await cur.execute("SELECT * FROM events WHERE id = %s", (eid,))
             event = await cur.fetchone()
         if not event:

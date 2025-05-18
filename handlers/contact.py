@@ -3,8 +3,7 @@ from aiogram.types import Message
 from database import get_connection
 
 router = Router()
-
-waiting_for_message = set()
+waiting_for_message = set()  # ID пользователей, ожидающих отправки сообщения
 
 @router.message(F.text.strip() == "📩 Связь")
 async def contact_intro(message: Message):

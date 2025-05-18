@@ -6,13 +6,13 @@ router = Router()
 
 user_messages = {}
 
-@router.message(F.text == "📩 Связь")
+@router.message(F.text.strip() == "📩 Связь")
 async def contact_intro(message: Message):
     await message.answer("✉️ Напиши сообщение, которое ты хочешь отправить администрации.")
 
 @router.message()
 async def catch_contact_message(message: Message):
-    if message.text and message.text != "/start":
+    if message.text and message.text.strip() != "/start":
         async with await get_connection() as conn:
             sender = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)
             if not sender:
@@ -23,7 +23,7 @@ async def catch_contact_message(message: Message):
                     message.from_user.full_name or ""
                 )
 
-            user_messages[message.from_user.id] = message.text
+            user_messages[message.from_user.id] = message.text.strip()
 
             await message.answer("📨 Сообщение отправлено администрации.")
 

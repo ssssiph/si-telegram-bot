@@ -4,8 +4,8 @@ import re
 from aiogram import Router, F, types
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State  # Исправленный импорт для aiogram v3.x
 from aiomysql import DictCursor  # для получения результатов в виде словаря
-from aiogram.dispatcher.filters.state import StatesGroup, State
 from database import get_connection
 
 router = Router()
@@ -129,7 +129,7 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
 async def process_contact_reply(message: Message, state: FSMContext):
     data = await state.get_data()
     if "contact_reply_id" not in data or not data["contact_reply_id"]:
-        return  # Если обращение не выбрано – игнорируем сообщение.
+        return
     contact_id = data["contact_reply_id"]
     conn = await get_connection()
     try:
@@ -156,7 +156,6 @@ async def process_contact_reply(message: Message, state: FSMContext):
                 message_id=message.message_id
             )
         await message.answer("Ответ отправлен пользователю.")
-        # Обновляем список обращений – отправляем новый список, чтобы ответанное обращение исчезло
         await send_contacts_list_to_admin(message, state)
     except Exception as e:
         await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
@@ -213,7 +212,7 @@ async def process_event_prize(message: Message, state: FSMContext):
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            # Обратите внимание: в таблице events должна быть колонка published (TEXT) для хранения JSON с опубликованными сообщениями
+            # Таблица events должна содержать колонку published (TEXT) для хранения JSON опубликованных сообщений
             await cur.execute(
                 "INSERT INTO events (title, description, prize, datetime, media, creator_id, published) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (title, description, prize, datetime_str, "", message.from_user.id, "{}")
@@ -295,24 +294,20 @@ async def event_publish_callback(query: types.CallbackQuery, state: FSMContext):
         return
     conn = await get_connection()
     try:
-        # Извлекаем данные события
         async with conn.cursor(DictCursor) as cur:
             await cur.execute("SELECT * FROM events WHERE id = %s", (event_id,))
             event = await cur.fetchone()
         if not event:
             await query.message.answer("Событие не найдено.")
             return
-        # Формируем сообщение о событии
         publish_text = f"📢 Событие!\n\nНазвание: {event.get('title')}\nДата и время: {event.get('datetime')}\nОписание: {event.get('description')}\nПриз: {event.get('prize')}"
-        published = {}  # будем хранить маппинг: channel_id -> message_id
+        published = {}  # маппинг: channel_id -> message_id
         for ch in CHANNEL_IDS:
             try:
                 sent = await query.bot.send_message(ch, publish_text)
                 published[str(ch)] = sent.message_id
             except Exception as pub_e:
-                # Если не удалось отправить в канал, пропускаем его
                 print(f"Ошибка публикации в канале {ch}: {pub_e}")
-        # Сохраняем JSON с опубликованными сообщениями в колонке published
         async with conn.cursor() as cur:
             await cur.execute("UPDATE events SET published = %s WHERE id = %s", (json.dumps(published), event_id))
             await conn.commit()
@@ -443,7 +438,7 @@ async def user_manage_callback(query: types.CallbackQuery, state: FSMContext):
     finally:
         await safe_close(conn)
 
-# Состояния для изменения баланса (алмазики)
+# Состояния для изменения баланса
 class UserDiamondState(StatesGroup):
     waiting_for_diamond_value = State()
 
@@ -479,7 +474,6 @@ async def process_diamond_change(message: Message, state: FSMContext):
             else:
                 await cur.execute("UPDATE users SET balance = GREATEST(balance - %s, 0) WHERE tg_id = %s", (value, user_id))
             await conn.commit()
-        # Отправляем уведомление пользователю
         if action == "give":
             notification = f"Вам было выдано {value} 💎."
         else:
@@ -549,7 +543,7 @@ async def process_broadcast(message: Message, state: FSMContext):
                 await message.bot.send_message(user.get("tg_id"), f"📣 Объявление:\n\n{announcement}")
                 count += 1
             except Exception as e:
-                print(f"Ошибка отправки объявление пользователю {user.get('tg_id')}: {e}")
+                print(f"Ошибка отправки объявления пользователю {user.get('tg_id')}: {e}")
         await message.answer(f"Объявление отправлено {count} пользователям.")
     except Exception as e:
         await message.answer(f"Ошибка при рассылке объявления: <code>{e}</code>")

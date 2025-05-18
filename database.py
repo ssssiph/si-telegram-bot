@@ -20,6 +20,7 @@ async def init_db():
             blocked BOOLEAN DEFAULT FALSE
         );
     """)
+    # Если есть таблица events — создаём её:
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id SERIAL PRIMARY KEY,

@@ -1,50 +1,48 @@
 import aiomysql
-from aiogram import Router, F
-from aiogram.types import Message, ReplyKeyboardRemove
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-
+from aiogram import Router
+from aiogram.types import Message
 from keyboards import back_menu
 from database import get_connection
 
 router = Router()
 
-class EventCreation(StatesGroup):
-    title = State()
-    description = State()
-    prize = State()
-    datetime = State()
-    media = State()
-
-@router.message(F.text == "🛠 Управление")
+@router.message(lambda message: message.text is not None and message.text.strip() == "🛠 Управление")
 async def admin_panel(message: Message):
+    conn = await get_connection()
     try:
-        conn = await get_connection()
         async with conn.cursor() as cur:
+            # Проверяем, существует ли пользователь
             await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (message.from_user.id,))
             result = await cur.fetchone()
 
             if not result:
+                # Если пользователь не найден, регистрируем его как Гость (если не админ)
+                if message.from_user.id == 1016554091:
+                    new_rank = 'Генеральный директор'
+                else:
+                    new_rank = 'Гость'
                 await cur.execute("""
                     INSERT INTO users (tg_id, username, full_name, `rank`, balance)
-                    VALUES (%s, %s, %s, 'Генеральный директор', 0)
+                    VALUES (%s, %s, %s, %s, 0)
                 """, (
                     message.from_user.id,
                     message.from_user.username or "-",
-                    message.from_user.full_name or "-"
+                    message.from_user.full_name or "-",
+                    new_rank
                 ))
-                rank = 'Генеральный директор'
+                rank = new_rank
             else:
                 rank = result[0]
 
-        # 🔍 Всегда выводим ранг
+        # Выводим полученный ранг
         await message.answer(f"🔍 Ваш ранг: <b>{rank}</b>")
 
-        # 🛡 Проверка прав
+        # Если ранг не "Генеральный директор" - доступ закрыт
         if rank != "Генеральный директор":
             await message.answer("❌ У вас нет доступа к управлению.")
             return
 
+        # Если доступ имеется – выводим панель управления
         await message.answer(
             "🛠 Панель управления:\n\n"
             "1️⃣ Создать событие\n"
@@ -57,9 +55,5 @@ async def admin_panel(message: Message):
     except Exception as e:
         await message.answer(f"❗ Произошла ошибка в админке:\n<code>{e}</code>")
         print("[MANAGE ERROR]", e)
-
     finally:
-        try:
-            conn.close()
-        except:
-            pass
+        conn.close()

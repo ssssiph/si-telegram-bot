@@ -46,11 +46,13 @@ async def get_media(message: Message, state: FSMContext):
 
     data["media"] = media
 
-    async with await get_connection() as conn:
+    conn = await get_connection()
+    try:
         await conn.execute("""
             INSERT INTO events (title, description, prize, datetime, media, creator_id)
             VALUES ($1, $2, $3, $4, $5, $6)
         """, data["title"], data["description"], data["prize"], data["datetime"], data["media"], message.from_user.id)
-
-    await message.answer("✅ Событие создано!")
-    await state.clear()
+        await message.answer("✅ Событие создано!")
+        await state.clear()
+    finally:
+        await conn.close()

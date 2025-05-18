@@ -11,20 +11,31 @@ async def contact_intro(message: Message):
     await message.answer("✉️ Напиши сообщение, которое ты хочешь отправить администрации.")
 
 @router.message()
-async def receive_contact(message: Message):
-    if message.from_user.id in waiting_for_contact:
-        waiting_for_contact.remove(message.from_user.id)
-        conn = await get_connection()
-        try:
-            user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)
+async def receive_contact_message(message: Message):
+    if message.from_user.id not in waiting_for_contact:
+        return
+
+    waiting_for_contact.remove(message.from_user.id)
+
+    conn = await get_connection()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM users WHERE tg_id = %s", (message.from_user.id,))
+            user = await cur.fetchone()
+
             if not user:
-                await conn.execute("""
+                await cur.execute("""
                     INSERT INTO users (tg_id, username, full_name, rank, balance)
-                    VALUES ($1, $2, $3, 'Гость', 0)
-                """, message.from_user.id, message.from_user.username or "-", message.from_user.full_name or "-")
+                    VALUES (%s, %s, %s, 'Гость', 0)
+                """, (
+                    message.from_user.id,
+                    message.from_user.username or "-",
+                    message.from_user.full_name or "-"
+                ))
+
             sender_name = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name or "-"
             text = f"📩 <b>Новое сообщение от {sender_name}</b>\n\n{message.text}"
             await message.bot.send_message(1016554091, text)
             await message.answer("📨 Сообщение отправлено администрации.")
-        finally:
-            await conn.close()
+    finally:
+        conn.close()

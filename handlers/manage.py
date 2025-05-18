@@ -3,13 +3,14 @@ import json
 from aiogram import Router, types, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State  # для aiogram v3.x
-from aiomysql import DictCursor              # для работы с запросами в виде словаря
+from aiogram.fsm.state import StatesGroup, State    # для aiogram v3.x
+from aiomysql import DictCursor                    # для работы с результатами запросов в виде словаря
 from database import get_connection
 
 router = Router()
-ADMIN_ID = 1016554094
-# Убедитесь, что chat_id канала указан корректно (для каналов chat_id обычно – отрицательное число)
+# Обратите внимание: фактический ID администратора равен 1016554091 (а не 1016554094)
+ADMIN_ID = 1016554091
+# Укажите PUBLISH_CHANNEL_ID как отрицательное число, если канал закрытый (например, -1002292957980)
 PUBLISH_CHANNEL_ID = -1002292957980
 
 async def safe_close(conn):
@@ -28,7 +29,7 @@ class ContactReplyState(StatesGroup):
     waiting_for_reply = State()
 
 # =============================================================================
-# FSM для создания события
+# FSM для создания событий
 # =============================================================================
 class EventCreation(StatesGroup):
     waiting_for_title = State()
@@ -38,22 +39,24 @@ class EventCreation(StatesGroup):
     waiting_for_media = State()
 
 # =============================================================================
-# FSM для редактирования события
+# FSM для редактирования событий
 # =============================================================================
 class EventEditState(StatesGroup):
     waiting_for_edit_details = State()
 
 # =============================================================================
 # Обработка входящих сообщений от пользователей (обращения)
+# (Обрабатываются только сообщения от пользователей, отличных от администратора)
 # =============================================================================
 @router.message(lambda m: m.chat.type == "private" and m.from_user.id != ADMIN_ID)
 async def handle_incoming_contact(m: Message, state: FSMContext):
-    # Если есть активное состояние (например, админ в диалоге создания/редактирования), не обрабатываем как обращение
+    # Если уже активен FSM (например, при работе администратора), не обрабатываем это сообщение
     if await state.get_state() is not None:
         return
     conn = await get_connection()
     try:
-        sender_info = f"{m.from_user.full_name} (@{m.from_user.username})" if m.from_user.username else m.from_user.full_name
+        sender_info = (f"{m.from_user.full_name} (@{m.from_user.username})"
+                       if m.from_user.username else m.from_user.full_name)
         if m.content_type == "text":
             content = m.text
         else:
@@ -76,7 +79,8 @@ async def handle_incoming_contact(m: Message, state: FSMContext):
 # =============================================================================
 @router.message(lambda message: message.text and message.text.strip().lower() == "⚙️ управление")
 async def admin_panel(message: Message, state: FSMContext):
-    await state.clear()  # сбрасываем предыдущее состояние
+    # Сброс FSM-состояния, чтобы не мешали предыдущие процессы
+    await state.clear()
     print("[Admin] Запуск панели для", message.from_user.id)
     conn = await get_connection()
     try:
@@ -339,7 +343,7 @@ async def process_event_media(message: Message, state: FSMContext):
         await state.clear()
         await safe_close(conn)
 
-# Редактирование события – вывод панели редактирования с кнопками "Опубликовать" и "Удалить"
+# Редактирование события – вывод панели с кнопками "Опубликовать" и "Удалить"
 @router.callback_query(lambda q: q.data and q.data.startswith("event_edit:"))
 async def event_edit_callback(query: types.CallbackQuery, state: FSMContext):
     eid_str = query.data.split(":", 1)[1]

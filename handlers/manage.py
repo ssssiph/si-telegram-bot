@@ -2,11 +2,18 @@ import re
 from aiogram import Router, F, types
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
-from aiomysql import DictCursor  # используем DictCursor для получения результатов в виде словаря
+from aiomysql import DictCursor  # для получения результатов в виде словаря
 from database import get_connection
 
 router = Router()
-ADMIN_ID = 1016554091  # ID администратора (Генеральный директор)
+ADMIN_ID = 1016554091  # ID администратора (например, Генеральный директор)
+
+# Вспомогательная функция для безопасного закрытия подключения.
+async def safe_close(conn):
+    if conn:
+        ret = conn.close()
+        if ret is not None and hasattr(ret, '__await__'):
+            await ret
 
 # ---------------------------------------------
 # Обработчик для кнопки "⚙️ Управление" из главного меню
@@ -25,7 +32,7 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Формируем inline‑клавиатуру для админпанели – кнопка с надписью "Связь"
+        # Формируем inline‑клавиатуру для админпанели – одна кнопка "Связь"
         inline_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Связь", callback_data="admin_contacts_list")]
         ])
@@ -33,8 +40,7 @@ async def admin_panel(message: Message, state: FSMContext):
     except Exception as e:
         await message.answer(f"Ошибка в админке:\n<code>{e}</code>")
     finally:
-        if conn:
-            await conn.close()
+        await safe_close(conn)
 
 # Вспомогательная функция для отправки списка обращений администратору
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
@@ -62,7 +68,7 @@ async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
             contact_id = contact.get("id")
             created_at = contact.get("created_at")
             date_str = str(created_at) if created_at else ""
-            # Добавляем дату в конец строки после закрывающей скобки
+            # Формируем кнопку с датой после скобок
             button_text = f"{full_name} ({username} | {contact_id}) {date_str}"
             callback_data = f"contact_reply:{contact_id}"
             buttons.append([InlineKeyboardButton(text=button_text, callback_data=callback_data)])
@@ -73,8 +79,7 @@ async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     except Exception as e:
         await dest_message.answer(f"Ошибка при получении обращений: <code>{e}</code>")
     finally:
-        if conn:
-            await conn.close()
+        await safe_close(conn)
 
 # -------------------------------------------------
 # Callback для отображения списка обращений после нажатия кнопки "Связь" (в админпанели)
@@ -137,7 +142,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
             await state.clear()
             return
         target_user_id = contact.get("tg_id")
-        # Если сообщение текстовое, отправляем send_message; если медиа – используем copy_message
+        # Если текстовое сообщение, отправляем текстовый ответ; иначе, используем copy_message для пересылки медиа
         if message.content_type == 'text':
             await message.bot.send_message(target_user_id, f"📨 Ответ от администрации:\n\n{message.text}")
         else:
@@ -148,16 +153,15 @@ async def process_contact_reply(message: Message, state: FSMContext):
             )
         await message.answer("Ответ отправлен пользователю.")
         print(f"[ADMIN REPLY] Ответ на обращение {contact_id} отправлен пользователю {target_user_id}.")
-        # После отправки обновляем список обращений так, чтобы ответанное обращение исчезло
+        # После отправки обновляем список обращений, чтобы ответанное обращение исчезло
         await send_contacts_list_to_admin(message, state)
     except Exception as e:
         await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
     finally:
-        # Очищаем только ключ обращения, сохраняя номер текущей страницы, если он есть
+        # Очищаем только ключ обращения, сохраняя номер текущей страницы, если он установлен
         current_state = await state.get_data()
         new_state = {}
         if "contacts_page" in current_state:
             new_state["contacts_page"] = current_state["contacts_page"]
         await state.set_data(new_state)
-        if conn:
-            await conn.close()
+        await safe_close(conn)

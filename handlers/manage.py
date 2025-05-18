@@ -14,7 +14,6 @@ ADMIN_ID = 1016554094  # Укажите актуальный ID админист
 channels_raw = os.getenv("CHANNEL_IDS", "")
 CHANNEL_IDS = [int(ch.strip()) for ch in channels_raw.split(",") if ch.strip()]
 
-# Функция для безопасного закрытия подключения
 async def safe_close(conn):
     if conn:
         try:
@@ -64,7 +63,7 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Меню с кнопками для секций: Обращения и События (остальные можно дорабатывать позднее)
+        # Выводим меню с кнопками для секций "Обращения" и "События"
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")],
             [InlineKeyboardButton(text="События", callback_data="admin_events_list")]
@@ -78,7 +77,7 @@ async def admin_panel(message: Message, state: FSMContext):
         await safe_close(conn)
 
 # =============================================================================
-# Раздел "Обращения" – рабочая версия (как ранее)
+# Раздел "Обращения" – рабочая версия
 # =============================================================================
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Обращения] Запрос списка обращений")
@@ -175,14 +174,26 @@ async def process_contact_reply(message: Message, state: FSMContext):
             await message.answer("Ошибка: отсутствует tg_id.")
             await state.clear()
             return
-        print(f"[Обращения] Отправка ответа пользователю {target_id}")
+
+        # Получаем оригинальный текст обращения и информацию об авторе
+        original_text = contact.get("message") or "Нет текста обращения."
+        author_info = f"{contact.get('full_name','-')} (@{contact.get('username','-')})"
+
         if message.content_type == "text":
-            await message.bot.send_message(target_id, f"📨 Ответ от администрации:\n\n{message.text}")
+            combined = (
+                f"Ваше обращение от {author_info}:\n\n{original_text}\n\n"
+                f"Ответ от администрации:\n\n{message.text}"
+            )
+            await message.bot.send_message(target_id, combined)
         else:
             await message.bot.copy_message(
                 chat_id=target_id,
                 from_chat_id=message.chat.id,
                 message_id=message.message_id
+            )
+            await message.bot.send_message(
+                target_id,
+                f"Ваше обращение от {author_info}:\n\n{original_text}"
             )
         await message.answer("Ответ отправлен пользователю.")
     except Exception as e:
@@ -215,6 +226,7 @@ async def send_events_list_to_admin(dest_message: Message, state: FSMContext):
                 datetime_str = event.get("datetime") or "-"
                 eid = event.get("id")
                 btn_text = f"{title} | {datetime_str}"
+                # При редактировании событий теперь выводим две кнопки: "Опубликовать" и "Удалить"
                 buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"event_edit:{eid}")])
             if len(events) == per_page:
                 buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="events_page:next")])
@@ -307,10 +319,11 @@ async def process_event_media(message: Message, state: FSMContext):
             )
             await conn.commit()
             event_id = cur.lastrowid
+        # После создания события выводим две кнопки: "Опубликовать" и "Удалить"
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Опубликовать событие", callback_data=f"event_publish:{event_id}")],
+            [InlineKeyboardButton(text="Опубликовать", callback_data=f"event_publish:{event_id}"),
+             InlineKeyboardButton(text="Удалить", callback_data=f"event_delete:{event_id}")],
             [InlineKeyboardButton(text="Редактировать событие", callback_data=f"event_edit:{event_id}")],
-            [InlineKeyboardButton(text="Удалить событие", callback_data=f"event_delete:{event_id}")],
             [InlineKeyboardButton(text="Назад", callback_data="admin_events_list")]
         ])
         await message.answer(f"Событие создано с ID: {event_id}. Теперь выберите действие:", reply_markup=kb)
@@ -381,7 +394,12 @@ async def process_event_edit(message: Message, state: FSMContext):
                 (title, datetime_str, description, prize, media, eid)
             )
             await conn.commit()
-        await message.answer("Событие обновлено успешно.")
+        # После редактирования выводим две кнопки: "Опубликовать" и "Удалить"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Опубликовать", callback_data=f"event_publish:{eid}"),
+             InlineKeyboardButton(text="Удалить", callback_data=f"event_delete:{eid}")]
+        ])
+        await message.answer("Событие обновлено успешно.", reply_markup=kb)
         print(f"[Events] Событие {eid} обновлено")
     except Exception as e:
         await message.answer(f"Ошибка при обновлении события: <code>{e}</code>")
@@ -416,6 +434,7 @@ async def event_publish_callback(query: types.CallbackQuery, state: FSMContext):
         )
         if event.get("media"):
             publish_text += f"\n(Медиа: {event.get('media')})"
+        print("[Events] Каналы для публикации:", CHANNEL_IDS)
         published = {}
         for ch in CHANNEL_IDS:
             try:
@@ -459,7 +478,7 @@ async def event_delete_callback(query: types.CallbackQuery, state: FSMContext):
         await query.answer()
 
 # =============================================================================
-# Секции "Пользователи" и "Объявления" оставлены заглушками
+# Заглушки для разделов "Пользователи" и "Объявления"
 # =============================================================================
 @router.callback_query(lambda q: q.data == "admin_users_list")
 async def users_list_stub(query: types.CallbackQuery, state: FSMContext):

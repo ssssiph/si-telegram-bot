@@ -3,13 +3,13 @@ import json
 from aiogram import Router, types, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State  # для aiogram v3.x
-from aiomysql import DictCursor  # для работы с результатами запросов в виде словаря
+from aiogram.fsm.state import StatesGroup, State    # для aiogram v3.x
+from aiomysql import DictCursor                    # для работы с запросами в виде словаря
 from database import get_connection
 
 router = Router()
 ADMIN_ID = 1016554094
-# ВАЖНО: Для каналов в Telegram chat_id всегда отрицательный. Если ваш реальный чат_id – -1002292957980, используйте его.
+# Если у вас закрытый канал, его chat_id должен быть отрицательным.
 PUBLISH_CHANNEL_ID = -1002292957980
 
 async def safe_close(conn):
@@ -21,15 +21,15 @@ async def safe_close(conn):
         except Exception as ex:
             print("safe_close error:", ex)
 
-# ======================================================================
-# FSM для ответа на обращение
-# ======================================================================
+# =============================================================================
+# FSM для ответов на обращения
+# =============================================================================
 class ContactReplyState(StatesGroup):
     waiting_for_reply = State()
 
-# ======================================================================
+# =============================================================================
 # FSM для создания события
-# ======================================================================
+# =============================================================================
 class EventCreation(StatesGroup):
     waiting_for_title = State()
     waiting_for_datetime = State()
@@ -37,18 +37,43 @@ class EventCreation(StatesGroup):
     waiting_for_prize = State()
     waiting_for_media = State()
 
-# ======================================================================
+# =============================================================================
 # FSM для редактирования события
-# ======================================================================
+# =============================================================================
 class EventEditState(StatesGroup):
     waiting_for_edit_details = State()
 
-# ======================================================================
+# =============================================================================
+# Обработка входящих сообщени­й от пользователей (обращения)
+# =============================================================================
+@router.message(lambda m: m.chat.type == "private" and m.from_user.id != ADMIN_ID)
+async def handle_incoming_contact(m: Message):
+    conn = await get_connection()
+    try:
+        sender_info = f"{m.from_user.full_name} (@{m.from_user.username})" if m.from_user.username else m.from_user.full_name
+        if m.content_type == "text":
+            content = m.text
+        else:
+            content = f"[Медиа: {m.content_type}]\nОтправитель: {sender_info}"
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO contacts (tg_id, full_name, username, message, answered) VALUES (%s, %s, %s, %s, %s)",
+                (m.from_user.id, m.from_user.full_name, m.from_user.username, content, False)
+            )
+            await conn.commit()
+        await m.answer("Ваше обращение принято.")
+    except Exception as e:
+        await m.answer("Ошибка при отправке обращения.")
+        print("Error in handle_incoming_contact:", e)
+    finally:
+        conn.close()
+
+# =============================================================================
 # Главная админ-панель
-# ======================================================================
+# =============================================================================
 @router.message(lambda message: message.text and message.text.strip().lower() == "⚙️ управление")
 async def admin_panel(message: Message, state: FSMContext):
-    # Очистка состояния для избежания конфликтов
+    # Сброс предыдущих состояний
     await state.clear()
     print("[Admin] Запуск панели для", message.from_user.id)
     conn = await get_connection()
@@ -63,7 +88,6 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Панель с двумя кнопками: "Обращения" и "События"
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")],
             [InlineKeyboardButton(text="События", callback_data="admin_events_list")]
@@ -76,19 +100,120 @@ async def admin_panel(message: Message, state: FSMContext):
     finally:
         await safe_close(conn)
 
-# ======================================================================
-# (Раздел "Обращения" оставляем рабочим, убедитесь, что есть обработчик с callback "admin_contacts_list")
-# ======================================================================
-# Если кнопка "Обращения" не работает, убедитесь, что обработчик admin_contacts_list зарегистрирован
+# =============================================================================
+# Раздел "Обращения"
+# =============================================================================
+async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
+    print("[Contacts] Запрос списка обращений")
+    conn = await get_connection()
+    try:
+        data = await state.get_data()
+        page = data.get("contacts_page", 1)
+        per_page = 9
+        offset = (page - 1) * per_page
+        async with conn.cursor(DictCursor) as cur:
+            await cur.execute(
+                "SELECT * FROM contacts WHERE answered = FALSE ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                (per_page, offset)
+            )
+            contacts = await cur.fetchall()
+        if not contacts:
+            await dest_message.answer("Нет новых обращений.")
+            return
+        buttons = []
+        for contact in contacts:
+            cid = contact.get("id")
+            full_name = contact.get("full_name") or "-"
+            username = contact.get("username") or "-"
+            created_at = contact.get("created_at")
+            date_str = str(created_at) if created_at else ""
+            btn_text = f"{full_name} (@{username} | {cid}) {date_str}"
+            buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"contact_reply:{cid}")])
+        if len(contacts) == per_page:
+            buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="contacts_page:next")])
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await dest_message.answer("Обращения:", reply_markup=kb)
+        print("[Contacts] Список обращений отправлен")
+    except Exception as e:
+        await dest_message.answer(f"Ошибка при получении обращений: <code>{e}</code>")
+        print("[Contacts ERROR]", e)
+    finally:
+        await safe_close(conn)
+
 @router.callback_query(lambda q: q.data == "admin_contacts_list")
 async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMContext):
-    # Здесь должен быть код для отображения обращений – убедитесь, что он присутствует
-    await query.message.answer("Обращения ... (код для обращений работает)", reply_markup=InlineKeyboardMarkup())
+    await send_contacts_list_to_admin(query.message, state)
     await query.answer()
 
-# ======================================================================
+@router.callback_query(lambda q: q.data and q.data.startswith("contacts_page:"))
+async def contacts_page_nav(query: types.CallbackQuery, state: FSMContext):
+    direction = query.data.split(":", 1)[1]
+    data = await state.get_data()
+    page = data.get("contacts_page", 1)
+    page = page + 1 if direction == "next" else max(1, page - 1)
+    await state.update_data(contacts_page=page)
+    await send_contacts_list_to_admin(query.message, state)
+    await query.answer()
+
+@router.callback_query(lambda q: q.data and q.data.startswith("contact_reply:"))
+async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
+    cid_str = query.data.split(":", 1)[1]
+    try:
+        cid = int(cid_str)
+    except ValueError:
+        await query.answer("Неверные данные.", show_alert=True)
+        return
+    await state.update_data(contact_reply_id=cid)
+    print(f"[Contacts] Выбрано обращение #{cid} для ответа")
+    await query.message.answer("Введите ответ для данного обращения:")
+    await state.set_state(ContactReplyState.waiting_for_reply)
+    await query.answer("Ожидается ваш ответ.")
+
+@router.message(ContactReplyState.waiting_for_reply)
+async def process_contact_reply(message: Message, state: FSMContext):
+    data = await state.get_data()
+    cid = data.get("contact_reply_id")
+    if not cid:
+        await message.answer("Ошибка: обращение не выбрано.")
+        await state.clear()
+        return
+    conn = await get_connection()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE contacts SET answered = TRUE WHERE id = %s", (cid,))
+            await conn.commit()
+        async with conn.cursor(DictCursor) as cur:
+            await cur.execute("SELECT * FROM contacts WHERE id = %s", (cid,))
+            contact = await cur.fetchone()
+        if not contact:
+            await message.answer("Обращение не найдено.")
+            await state.clear()
+            return
+        target_id = contact.get("tg_id")
+        if not target_id:
+            await message.answer("Ошибка: отсутствует tg_id.")
+            await state.clear()
+            return
+        original_text = contact.get("message") or "Нет текста обращения."
+        author_info = f"{contact.get('full_name','-')}" + (f" (@{contact.get('username','-')})" if contact.get("username") else "")
+        header = f"Ваше обращение от {author_info}:\n\n{original_text}\n\nОтвет от администрации:"
+        if message.content_type == "text":
+            await message.bot.send_message(target_id, header + "\n\n" + message.text)
+        else:
+            await message.bot.send_message(target_id, header + "\n\nОтвет ниже:")
+            await message.bot.copy_message(chat_id=target_id, from_chat_id=message.chat.id, message_id=message.message_id)
+        await message.answer("Ответ отправлен пользователю.")
+    except Exception as e:
+        await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
+        print("[Contacts ERROR при ответе]", e)
+    finally:
+        await state.clear()
+        await safe_close(conn)
+        await send_contacts_list_to_admin(message, state)
+
+# =============================================================================
 # Раздел "События"
-# ======================================================================
+# =============================================================================
 async def send_events_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Events] Получение списка событий")
     conn = await get_connection()
@@ -108,7 +233,6 @@ async def send_events_list_to_admin(dest_message: Message, state: FSMContext):
                 datetime_str = event.get("datetime") or "-"
                 eid = event.get("id")
                 btn_text = f"{title} | {datetime_str}"
-                # Чтобы попасть в панель редактирования с кнопками "Опубликовать" и "Удалить":
                 buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"event_edit:{eid}")])
             if len(events) == per_page:
                 buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="events_page:next")])
@@ -133,10 +257,7 @@ async def events_page_nav(query: types.CallbackQuery, state: FSMContext):
     direction = query.data.split(":", 1)[1]
     data = await state.get_data()
     page = data.get("events_page", 1)
-    if direction == "next":
-        page += 1
-    else:
-        page = max(1, page - 1)
+    page = page + 1 if direction == "next" else max(1, page - 1)
     await state.update_data(events_page=page)
     await send_events_list_to_admin(query.message, state)
     await query.answer()
@@ -201,7 +322,7 @@ async def process_event_media(message: Message, state: FSMContext):
             )
             await conn.commit()
             event_id = cur.lastrowid
-        # После создания события выводим панель редактирования с кнопками "Опубликовать" и "Удалить" и "Редактировать событие"
+        # Выводим панель редактирования с кнопками "Опубликовать", "Удалить" и "Редактировать событие"
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Опубликовать", callback_data=f"event_publish:{event_id}"),
              InlineKeyboardButton(text="Удалить", callback_data=f"event_delete:{event_id}")],
@@ -217,7 +338,7 @@ async def process_event_media(message: Message, state: FSMContext):
         await state.clear()
         await safe_close(conn)
 
-# Редактирование события – панель редактирования с кнопками "Опубликовать" и "Удалить"
+# Редактирование события – вывод панели с кнопками "Опубликовать" и "Удалить"
 @router.callback_query(lambda q: q.data and q.data.startswith("event_edit:"))
 async def event_edit_callback(query: types.CallbackQuery, state: FSMContext):
     eid_str = query.data.split(":", 1)[1]
@@ -276,7 +397,6 @@ async def process_event_edit(message: Message, state: FSMContext):
                 (title, datetime_str, description, prize, media, eid)
             )
             await conn.commit()
-        # После редактирования выводим панель с кнопками "Опубликовать" и "Удалить"
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Опубликовать", callback_data=f"event_publish:{eid}"),
              InlineKeyboardButton(text="Удалить", callback_data=f"event_delete:{eid}")]
@@ -318,13 +438,26 @@ async def event_publish_callback(query: types.CallbackQuery, state: FSMContext):
             publish_text += f"\n(Медиа: {event.get('media')})"
         published = {}
         try:
-            sent = await query.bot.send_message(PUBLISH_CHANNEL_ID, publish_text, parse_mode="HTML")
+            # Если в событии есть медиа, можно использовать send_photo
+            sent = await query.bot.send_photo(PUBLISH_CHANNEL_ID,
+                                              photo=event.get("media"),
+                                              caption=publish_text,
+                                              parse_mode="HTML")
             published[str(PUBLISH_CHANNEL_ID)] = sent.message_id
-            print(f"[Events] Публикация прошла успешно в канал {PUBLISH_CHANNEL_ID}")
+            print(f"[Events] Публикация прошла успешно в канал {PUBLISH_CHANNEL_ID} как фото")
         except Exception as pub_e:
-            print(f"[Events] Ошибка публикации в канале {PUBLISH_CHANNEL_ID}: {pub_e}")
-            await query.message.answer(f"Ошибка публикации в канале: <code>{pub_e}</code>")
-            return
+            # Если не получилось отправить как фото – пробуем отправить как текст
+            print(f"[Events] Ошибка публикации фото в канале {PUBLISH_CHANNEL_ID}: {pub_e}")
+            try:
+                sent = await query.bot.send_message(PUBLISH_CHANNEL_ID,
+                                                    publish_text,
+                                                    parse_mode="HTML")
+                published[str(PUBLISH_CHANNEL_ID)] = sent.message_id
+                print(f"[Events] Публикация прошла успешно в канал {PUBLISH_CHANNEL_ID} как текст")
+            except Exception as pub_e2:
+                print(f"[Events] Ошибка публикации текста в канале {PUBLISH_CHANNEL_ID}: {pub_e2}")
+                await query.message.answer(f"Ошибка публикации в канале: <code>{pub_e2}</code>")
+                return
         async with conn.cursor() as cur:
             await cur.execute("UPDATE events SET published = %s WHERE id = %s", (json.dumps(published), eid))
             await conn.commit()

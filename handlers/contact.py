@@ -4,7 +4,10 @@ from database import get_connection
 
 router = Router()
 
-# Множество для хранения ID пользователей, ожидающих отправки сообщения администрации
+# Задаем ID администрации
+ADMIN_ID = 1016554091
+
+# Множество ID пользователей, ожидающих отправки сообщения администрации
 waiting_for_contact = set()
 
 # Словарь для хранения сессий ответа: key = admin_id, value = target_user_id
@@ -12,6 +15,10 @@ reply_sessions = {}
 
 @router.message(F.text == "📩 Связь")
 async def contact_intro(message: Message):
+    # Запрещаем администратору использовать эту функцию
+    if message.from_user.id == ADMIN_ID:
+        await message.answer("Администратор не может использовать эту функцию.")
+        return
     waiting_for_contact.add(message.from_user.id)
     await message.answer("✉️ Напиши сообщение, которое ты хочешь отправить администрации.")
     print(f"[CONTACT] Пользователь {message.from_user.id} перешёл в режим отправки сообщения.")
@@ -19,13 +26,13 @@ async def contact_intro(message: Message):
 @router.message()
 async def receive_contact_message(message: Message):
     if message.from_user.id not in waiting_for_contact:
-        return  # Если пользователь не ожидает отправки сообщения, выходим
-
+        return  # Если пользователь не в ожидании, выходим
     waiting_for_contact.remove(message.from_user.id)
+    
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            # Проверяем, зарегистрирован ли пользователь
+            # Проверяем, зарегистрирован ли пользователь; если нет — регистрируем его
             await cur.execute("SELECT * FROM users WHERE tg_id = %s", (message.from_user.id,))
             user = await cur.fetchone()
             if not user:
@@ -37,10 +44,12 @@ async def receive_contact_message(message: Message):
                     message.from_user.username or "-",
                     message.from_user.full_name or "-"
                 ))
-        sender_name = f"@{message.from_user.username}" if message.from_user.username else (message.from_user.full_name or "-")
+        sender_name = (f"@{message.from_user.username}"
+                       if message.from_user.username
+                       else message.from_user.full_name or "-")
         text = f"📩 <b>Новое сообщение от {sender_name}</b>\n\n{message.text}"
         
-        # Создаем inline-клавиатуру с кнопкой "Ответить" через явное указание inline_keyboard
+        # Создаем inline-клавиатуру с кнопкой "Ответить"
         inline_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="Ответить", callback_data=f"reply_{message.from_user.id}")]
@@ -49,17 +58,15 @@ async def receive_contact_message(message: Message):
         
         # Отправляем сообщение администрации с inline-клавиатурой.
         try:
-            await message.bot.send_message(1016554091, text, reply_markup=inline_kb, parse_mode="HTML")
+            await message.bot.send_message(ADMIN_ID, text, reply_markup=inline_kb, parse_mode="HTML")
             await message.answer("📨 Сообщение отправлено администрации.")
             print(f"[CONTACT] Сообщение от {message.from_user.id} отправлено администрации.")
         except Exception as e:
             print("[CONTACT ERROR] При отправке сообщения администрации:", e)
             await message.answer("❗ Не удалось отправить сообщение администрации.")
-            
     finally:
         conn.close()
 
-# Обработчик callback-запроса для кнопки "Ответить"
 @router.callback_query(lambda query: query.data is not None and query.data.startswith("reply_"))
 async def admin_reply_callback(query: types.CallbackQuery):
     # Извлекаем target_user_id из callback_data (формат: reply_<tg_id>)
@@ -70,16 +77,15 @@ async def admin_reply_callback(query: types.CallbackQuery):
         await query.answer("Ошибка: неверные данные", show_alert=True)
         return
 
+    # Регистрируем сессию ответа: администратор (query.from_user.id) отвечает target_user_id
     reply_sessions[query.from_user.id] = target_user_id
     await query.answer("Введите одно сообщение для ответа пользователю", show_alert=True)
     print(f"[REPLY] Администратор {query.from_user.id} готов ответить пользователю {target_user_id}.")
 
-# Обработчик текстовых сообщений для ответа администратора
 @router.message()
 async def admin_reply_handler(message: Message):
     if message.from_user.id not in reply_sessions:
         return
-
     target_user_id = reply_sessions.pop(message.from_user.id)
     try:
         await message.bot.send_message(target_user_id, f"📨 Ответ от администрации:\n\n{message.text}")

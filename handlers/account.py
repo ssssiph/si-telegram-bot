@@ -4,7 +4,7 @@ from database import get_connection
 
 router = Router()
 
-@router.message(F.text.strip() == "👤 Аккаунт")
+@router.message(F.text.contains("Аккаунт"))
 async def account_info(message: Message):
     conn = await get_connection()
     try:

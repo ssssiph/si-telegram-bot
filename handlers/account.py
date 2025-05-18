@@ -14,7 +14,7 @@ async def account_info(message: Message):
             return
 
         username = f"@{user.get('username', '-')}" if user.get('username') else "-"
-        full_name = message.from_user.full_name or "-"
+        full_name = user.get('full_name', message.from_user.full_name or "-")
         rank = user.get('rank', "Гость")
         balance = user.get('balance', 0)
 

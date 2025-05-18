@@ -8,6 +8,7 @@ router = Router()
 @router.message(F.text.contains("Управление"))
 async def admin_panel(message: Message):
     print(f"Получено сообщение: {message.text}")
+    print("Обработчик управления сработал")
 
     conn = await get_connection()
     try:

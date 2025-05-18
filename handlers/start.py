@@ -18,6 +18,9 @@ async def start_command(message: Message):
             )
 
         if message.from_user.id == 1016554091:
-            await conn.execute("UPDATE users SET rank = 'Генеральный директор' WHERE tg_id = $1", message.from_user.id)
+            await conn.execute(
+                "UPDATE users SET rank = 'Генеральный директор' WHERE tg_id = $1",
+                message.from_user.id
+            )
 
     await message.answer("Добро пожаловать в Siph Industry!", reply_markup=main_menu)

@@ -1,7 +1,5 @@
-import aiomysql
-from aiogram import Router
-from aiogram.types import Message
-from keyboards import back_menu
+from aiogram import Router, F
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from database import get_connection
 
 router = Router()
@@ -11,37 +9,26 @@ async def admin_panel(message: Message):
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            # Ищем пользователя по его tg_id
+            # Проверяем наличие пользователя в базе
             await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (message.from_user.id,))
             result = await cur.fetchone()
-            
             if not result:
-                # Пользователь не зарегистрирован – просим зарегистрироваться с помощью /start
                 await message.answer("❗ Пользователь не найден. Отправьте /start для регистрации.")
                 return
-            else:
-                rank = result[0]
-        
-        # Выводим текущий ранг пользователя
-        await message.answer(f"🔍 Ваш ранг: <b>{rank}</b>")
-        
-        # Если ранг не "Генеральный директор" – доступ закрыт
+            rank = result[0]
+        # Если ранг не соответствует, выдаём отказ
         if rank != "Генеральный директор":
-            await message.answer("❌ У вас нет доступа к управлению.")
+            await message.answer("Отказано в доступе.")
             return
 
-        # Если права есть – выводим панель управления
-        await message.answer(
-            "⚙️ Панель управления:\n\n"
-            "1️⃣ Создать событие\n"
-            "2️⃣ Редактировать/Удалить событие\n"
-            "3️⃣ Управление пользователями\n"
-            "0️⃣ Назад",
-            reply_markup=back_menu
+        # Для пользователей с рангом "Генеральный директор" отправляем сообщение с inline URL‑кнопкой
+        inline_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Перейти", url="https://example.com")]
+            ]
         )
-
+        await message.answer("Тестик", reply_markup=inline_kb)
     except Exception as e:
-        await message.answer(f"❗ Произошла ошибка в админке:\n<code>{e}</code>")
-        print("[MANAGE ERROR]", e)
+        await message.answer(f"Ошибка в админке:\n<code>{e}</code>")
     finally:
         conn.close()

@@ -37,7 +37,6 @@ async def init_db():
                 blocked BOOLEAN DEFAULT FALSE
             )
         """)
-
         await cur.execute("""
             CREATE TABLE IF NOT EXISTS events (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -47,6 +46,17 @@ async def init_db():
                 datetime TEXT,
                 media TEXT,
                 creator_id BIGINT
+            )
+        """)
+        await cur.execute("""
+            CREATE TABLE IF NOT EXISTS contacts (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                tg_id BIGINT,
+                username VARCHAR(255),
+                full_name VARCHAR(255),
+                message TEXT,
+                answered BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
     conn.close()

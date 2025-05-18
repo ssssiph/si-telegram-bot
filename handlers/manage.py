@@ -16,7 +16,7 @@ class EventCreation(StatesGroup):
     datetime = State()
     media = State()
 
-
+# 🛠 Главная панель управления
 @router.message(F.text == "🛠 Управление")
 async def admin_panel(message: Message):
     conn = await get_connection()
@@ -28,20 +28,25 @@ async def admin_panel(message: Message):
             if not result:
                 await cur.execute("""
                     INSERT INTO users (tg_id, username, full_name, `rank`, balance)
-                    VALUES (%s, %s, %s, 'Гость', 0)
+                    VALUES (%s, %s, %s, 'Генеральный директор', 0)
                 """, (
                     message.from_user.id,
                     message.from_user.username or "-",
                     message.from_user.full_name or "-"
                 ))
-                rank = 'Гость'
+                rank = 'Генеральный директор'
             else:
                 rank = result[0]
 
+            # 🔎 Покажем ранг в чате (отладка)
+            await message.answer(f"🔍 Ваш ранг: <b>{rank}</b>")
+
+            # 🛡 Проверка прав
             if rank != "Генеральный директор":
                 await message.answer("❌ У вас нет доступа к управлению.")
                 return
 
+            # ✅ Меню управления
             await message.answer(
                 "🛠 Панель управления:\n\n"
                 "1️⃣ Создать событие\n"
@@ -54,11 +59,11 @@ async def admin_panel(message: Message):
         conn.close()
 
 
+# 📋 Создание события
 @router.message(F.text == "1️⃣")
 async def create_event_start(message: Message, state: FSMContext):
     await message.answer("✍️ Введите <b>название</b> события:", reply_markup=ReplyKeyboardRemove())
     await state.set_state(EventCreation.title)
-
 
 @router.message(EventCreation.title)
 async def set_title(message: Message, state: FSMContext):
@@ -66,13 +71,11 @@ async def set_title(message: Message, state: FSMContext):
     await message.answer("📝 Теперь введите <b>описание</b> события:")
     await state.set_state(EventCreation.description)
 
-
 @router.message(EventCreation.description)
 async def set_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text)
     await message.answer("🏆 Укажите <b>приз</b> события:")
     await state.set_state(EventCreation.prize)
-
 
 @router.message(EventCreation.prize)
 async def set_prize(message: Message, state: FSMContext):
@@ -80,13 +83,11 @@ async def set_prize(message: Message, state: FSMContext):
     await message.answer("📅 Введите <b>дату и время</b> события:")
     await state.set_state(EventCreation.datetime)
 
-
 @router.message(EventCreation.datetime)
 async def set_datetime(message: Message, state: FSMContext):
     await state.update_data(datetime=message.text)
-    await message.answer("🖼 Пришлите изображение/видео или отправьте <b>«-»</b>, если не нужно:")
+    await message.answer("🖼 Пришлите изображение/видео или отправьте «-», если не нужно:")
     await state.set_state(EventCreation.media)
-
 
 @router.message(EventCreation.media)
 async def finish_event(message: Message, state: FSMContext):

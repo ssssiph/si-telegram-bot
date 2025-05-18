@@ -13,10 +13,10 @@ async def account_info(message: Message):
             await message.answer("❗ Пользователь не найден.")
             return
 
-        username = f"@{user['username']}" if user['username'] else "-"
-        full_name = user['full_name'] or "-"
-        rank = user['rank']
-        balance = user['balance']
+        username = f"@{user.get('username', '-')}" if user.get('username') else "-"
+        full_name = user.get('full_name', "-")
+        rank = user.get('rank', "Гость")
+        balance = user.get('balance', 0)
 
         await message.answer(
             f"<b>🧾 Ваш аккаунт:</b>\n"

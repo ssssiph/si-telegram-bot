@@ -10,9 +10,12 @@ from database import get_connection
 router = Router()
 ADMIN_ID = 1016554094  # Укажите актуальный ID администратора
 
-# Получаем список каналов для публикации событий (например: "-1001234567890,-1009876543210")
-channels_raw = os.getenv("CHANNEL_IDS", "")
-CHANNEL_IDS = [int(ch.strip()) for ch in channels_raw.split(",") if ch.strip()]
+# Если потребуется, можно задать CHANNEL_IDS – но сейчас публикация жестко будет проводится в один канал.
+# channels_raw = os.getenv("CHANNEL_IDS", "")
+# CHANNEL_IDS = [int(ch.strip()) for ch in channels_raw.split(",") if ch.strip()]
+
+# ID канала, куда будем публиковать события:
+PUBLISH_CHANNEL_ID = 2292957980
 
 async def safe_close(conn):
     if conn:
@@ -24,7 +27,7 @@ async def safe_close(conn):
             print("safe_close error:", ex)
 
 # =============================================================================
-# FSM для ответа на обращение
+# FSM для ответа на обращение (оставляем рабочую версию)
 # =============================================================================
 class ContactReplyState(StatesGroup):
     waiting_for_reply = State()
@@ -63,7 +66,7 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Выводим меню с кнопками для секций "Обращения" и "События"
+        # Панель содержит кнопки "Обращения" и "События"
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")],
             [InlineKeyboardButton(text="События", callback_data="admin_events_list")]
@@ -77,7 +80,7 @@ async def admin_panel(message: Message, state: FSMContext):
         await safe_close(conn)
 
 # =============================================================================
-# Раздел "Обращения" – рабочая версия
+# Раздел "Обращения" – оставляем тот код, который уже работает
 # =============================================================================
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Обращения] Запрос списка обращений")
@@ -175,15 +178,14 @@ async def process_contact_reply(message: Message, state: FSMContext):
             await state.clear()
             return
 
-        # Получаем оригинальный текст обращения и информацию об авторе
+        # Можно добавить отображение оригинального обращения и автора, если в contacts хранится нужная информация (например, "message", "full_name", "username")
         original_text = contact.get("message") or "Нет текста обращения."
-        author_info = f"{contact.get('full_name','-')} (@{contact.get('username','-')})"
-
+        author_info = f"{contact.get('full_name', '-')}" + (f" (@{contact.get('username', '-')})" if contact.get("username") else "")
+        combined = (
+            f"Ваше обращение от {author_info}:\n\n{original_text}\n\n"
+            f"Ответ от администрации:\n\n{message.text}"
+        )
         if message.content_type == "text":
-            combined = (
-                f"Ваше обращение от {author_info}:\n\n{original_text}\n\n"
-                f"Ответ от администрации:\n\n{message.text}"
-            )
             await message.bot.send_message(target_id, combined)
         else:
             await message.bot.copy_message(
@@ -191,10 +193,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
                 from_chat_id=message.chat.id,
                 message_id=message.message_id
             )
-            await message.bot.send_message(
-                target_id,
-                f"Ваше обращение от {author_info}:\n\n{original_text}"
-            )
+            await message.bot.send_message(target_id, f"Ваше обращение от {author_info}:\n\n{original_text}")
         await message.answer("Ответ отправлен пользователю.")
     except Exception as e:
         await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
@@ -226,7 +225,7 @@ async def send_events_list_to_admin(dest_message: Message, state: FSMContext):
                 datetime_str = event.get("datetime") or "-"
                 eid = event.get("id")
                 btn_text = f"{title} | {datetime_str}"
-                # При редактировании событий теперь выводим две кнопки: "Опубликовать" и "Удалить"
+                # На панели редактирования для каждого события кнопки "Опубликовать" и "Удалить"
                 buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"event_edit:{eid}")])
             if len(events) == per_page:
                 buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="events_page:next")])
@@ -319,7 +318,7 @@ async def process_event_media(message: Message, state: FSMContext):
             )
             await conn.commit()
             event_id = cur.lastrowid
-        # После создания события выводим две кнопки: "Опубликовать" и "Удалить"
+        # После создания события выводим кнопки "Опубликовать" и "Удалить" в панели редактирования
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Опубликовать", callback_data=f"event_publish:{event_id}"),
              InlineKeyboardButton(text="Удалить", callback_data=f"event_delete:{event_id}")],
@@ -394,7 +393,7 @@ async def process_event_edit(message: Message, state: FSMContext):
                 (title, datetime_str, description, prize, media, eid)
             )
             await conn.commit()
-        # После редактирования выводим две кнопки: "Опубликовать" и "Удалить"
+        # После редактирования выводим две кнопки: "Опубликовать" и "Удалить" на панельке редактирования
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Опубликовать", callback_data=f"event_publish:{eid}"),
              InlineKeyboardButton(text="Удалить", callback_data=f"event_delete:{eid}")]
@@ -408,7 +407,7 @@ async def process_event_edit(message: Message, state: FSMContext):
         await state.clear()
         await safe_close(conn)
 
-# Публикация события – отправка его в каналы
+# Публикация события – отправка его в канал с ID PUBLISH_CHANNEL_ID
 @router.callback_query(lambda q: q.data and q.data.startswith("event_publish:"))
 async def event_publish_callback(query: types.CallbackQuery, state: FSMContext):
     eid_str = query.data.split(":", 1)[1]
@@ -434,18 +433,17 @@ async def event_publish_callback(query: types.CallbackQuery, state: FSMContext):
         )
         if event.get("media"):
             publish_text += f"\n(Медиа: {event.get('media')})"
-        print("[Events] Каналы для публикации:", CHANNEL_IDS)
         published = {}
-        for ch in CHANNEL_IDS:
-            try:
-                sent = await query.bot.send_message(ch, publish_text, parse_mode="HTML")
-                published[str(ch)] = sent.message_id
-            except Exception as pub_e:
-                print(f"[Events] Ошибка публикации в канале {ch}: {pub_e}")
+        # Публикуем в канал с ID PUBLISH_CHANNEL_ID
+        try:
+            sent = await query.bot.send_message(PUBLISH_CHANNEL_ID, publish_text, parse_mode="HTML")
+            published[str(PUBLISH_CHANNEL_ID)] = sent.message_id
+        except Exception as pub_e:
+            print(f"[Events] Ошибка публикации в канале {PUBLISH_CHANNEL_ID}: {pub_e}")
         async with conn.cursor() as cur:
             await cur.execute("UPDATE events SET published = %s WHERE id = %s", (json.dumps(published), eid))
             await conn.commit()
-        await query.message.answer("Событие опубликовано во всех каналах.")
+        await query.message.answer("Событие опубликовано в канале.")
         print(f"[Events] Событие {eid} опубликовано:", published)
     except Exception as e:
         await query.message.answer(f"Ошибка при публикации события: <code>{e}</code>")

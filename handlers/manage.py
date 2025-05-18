@@ -8,9 +8,9 @@ from aiomysql import DictCursor  # для получения результат�
 from database import get_connection
 
 router = Router()
-ADMIN_ID = 1016554094  # Укажите актуальный ID администратора
+ADMIN_ID = 1016554094  # Замените на актуальный ID администратора
 
-# Если понадобится, получить список каналов для публикации событий
+# Получаем список каналов для публикации событий (например: "-1001234567890,-1009876543210")
 channels_raw = os.getenv("CHANNEL_IDS", "")
 CHANNEL_IDS = [int(ch.strip()) for ch in channels_raw.split(",") if ch.strip()]
 
@@ -25,13 +25,13 @@ async def safe_close(conn):
             print("safe_close error:", ex)
 
 # =============================================================================
-# FSM для ответа на обращение (работает — проверено)
+# FSM для ответа на обращение – рабочая версия
 # =============================================================================
 class ContactReplyState(StatesGroup):
     waiting_for_reply = State()
 
 # =============================================================================
-# FSM для создания события (уже реализован)
+# FSM для создания события
 # =============================================================================
 class EventCreation(StatesGroup):
     waiting_for_title = State()
@@ -41,22 +41,10 @@ class EventCreation(StatesGroup):
     waiting_for_media = State()
 
 # =============================================================================
-# Новый FSM для редактирования события
+# FSM для редактирования события – новый блок
 # =============================================================================
 class EventEditState(StatesGroup):
     waiting_for_edit_details = State()
-
-# =============================================================================
-# FSM для изменения ранга пользователя (заглушка, не используется здесь)
-# =============================================================================
-class UserRankState(StatesGroup):
-    waiting_for_new_rank = State()
-
-# =============================================================================
-# FSM для рассылки объявления (заглушка)
-# =============================================================================
-class BroadcastState(StatesGroup):
-    waiting_for_broadcast = State()
 
 # =============================================================================
 # ГЛАВНАЯ АДМИН-ПАНЕЛЬ
@@ -76,12 +64,10 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Выводим меню с кнопками для секций. Здесь для теста реализована только секция обращений и событий.
+        # Меню с кнопками: Обращения и События (остальные секции можно добавить позже)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")],
-            [InlineKeyboardButton(text="События", callback_data="admin_events_list")],
-            [InlineKeyboardButton(text="Пользователи", callback_data="admin_users_list")],
-            [InlineKeyboardButton(text="Объявления", callback_data="admin_broadcast")]
+            [InlineKeyboardButton(text="События", callback_data="admin_events_list")]
         ])
         await message.answer("Панель управления. Выберите раздел:", reply_markup=kb)
         print("[Admin] Меню выведено")
@@ -92,7 +78,7 @@ async def admin_panel(message: Message, state: FSMContext):
         await safe_close(conn)
 
 # =============================================================================
-# Раздел "Обращения" — рабочая версия (как ранее)
+# Раздел "Обращения" – рабочая версия (как в предыдущем варианте)
 # =============================================================================
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Обращения] Запрос списка обращений")
@@ -208,43 +194,95 @@ async def process_contact_reply(message: Message, state: FSMContext):
         await send_contacts_list_to_admin(message, state)
 
 # =============================================================================
-# Раздел "События" – создание и редактирование событий
+# Раздел "События" – создание, публикация и редактирование событий
 # =============================================================================
+# Меню списка событий
+async def send_events_list_to_admin(dest_message: Message, state: FSMContext):
+    print("[События] Получение списка событий")
+    conn = await get_connection()
+    try:
+        data = await state.get_data()
+        page = data.get("events_page", 1)
+        per_page = 9
+        offset = (page - 1) * per_page
+        async with conn.cursor(DictCursor) as cur:
+            await cur.execute("SELECT * FROM events ORDER BY datetime DESC LIMIT %s OFFSET %s", (per_page, offset))
+            events = await cur.fetchall()
+        buttons = []
+        # Кнопка для создания нового события
+        buttons.append([InlineKeyboardButton(text="Создать событие", callback_data="event_create")])
+        if events:
+            for event in events:
+                title = event.get("title") or "-"
+                datetime_str = event.get("datetime") or "-"
+                eid = event.get("id")
+                btn_text = f"{title} | {datetime_str}"
+                buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"event_edit:{eid}")])
+            if len(events) == per_page:
+                buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="events_page:next")])
+        else:
+            buttons.append([InlineKeyboardButton(text="Нет событий", callback_data="none")])
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await dest_message.answer("События:", reply_markup=kb)
+        print("[События] Список событий отправлен")
+    except Exception as e:
+        await dest_message.answer(f"Ошибка при получении событий: <code>{e}</code>")
+        print("[События ERROR при получении]", e)
+    finally:
+        await safe_close(conn)
 
-# Для создания нового события (остальные функции публикации и удаления оставляем без изменений)
+@router.callback_query(lambda q: q.data == "admin_events_list")
+async def admin_events_list_callback(query: types.CallbackQuery, state: FSMContext):
+    await send_events_list_to_admin(query.message, state)
+    await query.answer()
+
+@router.callback_query(lambda q: q.data and q.data.startswith("events_page:"))
+async def events_page_nav(query: types.CallbackQuery, state: FSMContext):
+    direction = query.data.split(":", 1)[1]
+    data = await state.get_data()
+    page = data.get("events_page", 1)
+    if direction == "next":
+        page += 1
+    else:
+        page = max(1, page - 1)
+    await state.update_data(events_page=page)
+    await send_events_list_to_admin(query.message, state)
+    await query.answer()
+
+# Создание события (FSM EventCreation)
 @router.callback_query(lambda q: q.data == "event_create")
 async def event_create_callback(query: types.CallbackQuery, state: FSMContext):
     print("[События] Начало создания события")
     await query.message.answer("Введите название события:")
-    await EventCreation.waiting_for_title.set()
+    await state.set_state(EventCreation.waiting_for_title)
     await query.answer()
 
 @router.message(EventCreation.waiting_for_title)
 async def process_event_title(message: Message, state: FSMContext):
     await state.update_data(event_title=message.text)
     await message.answer("Введите дату и время события:")
-    await EventCreation.next()
+    await state.set_state(EventCreation.waiting_for_datetime)
     print("[События] Название:", message.text)
 
 @router.message(EventCreation.waiting_for_datetime)
 async def process_event_datetime(message: Message, state: FSMContext):
     await state.update_data(event_datetime=message.text)
     await message.answer("Введите описание события:")
-    await EventCreation.next()
+    await state.set_state(EventCreation.waiting_for_description)
     print("[События] Дата-время:", message.text)
 
 @router.message(EventCreation.waiting_for_description)
 async def process_event_description(message: Message, state: FSMContext):
     await state.update_data(event_description=message.text)
     await message.answer("Введите приз (или оставьте пустым):")
-    await EventCreation.next()
+    await state.set_state(EventCreation.waiting_for_prize)
     print("[События] Описание:", message.text)
 
 @router.message(EventCreation.waiting_for_prize)
 async def process_event_prize(message: Message, state: FSMContext):
     await state.update_data(event_prize=message.text)
     await message.answer("Отправьте изображение или голосовое сообщение для события или введите 'skip':")
-    await EventCreation.next()
+    await state.set_state(EventCreation.waiting_for_media)
     print("[События] Приз:", message.text)
 
 @router.message(EventCreation.waiting_for_media)
@@ -286,11 +324,7 @@ async def process_event_media(message: Message, state: FSMContext):
         await state.clear()
         await safe_close(conn)
 
-# Теперь реализуем реальный редактор событий
-
-class EventEditState(StatesGroup):
-    waiting_for_edit_details = State()
-
+# Редактирование события – реализация редактора событий
 @router.callback_query(lambda q: q.data and q.data.startswith("event_edit:"))
 async def event_edit_callback(query: types.CallbackQuery, state: FSMContext):
     eid_str = query.data.split(":", 1)[1]
@@ -309,12 +343,12 @@ async def event_edit_callback(query: types.CallbackQuery, state: FSMContext):
             return
         current_details = (
             f"Текущее название: {event.get('title')}\n"
-            f"Текущая дата и время: {event.get('datetime')}\n"
-            f"Текущее описание: {event.get('description')}\n"
-            f"Текущий приз: {event.get('prize')}\n"
-            f"Текущее медиа: {event.get('media') or 'нет'}\n\n"
-            "Введите новые данные события в формате:\n"
-            "Название | Дата и время | Описание | Приз | Медиа (или 'skip' если нет)"
+            f"Дата и время: {event.get('datetime')}\n"
+            f"Описание: {event.get('description')}\n"
+            f"Приз: {event.get('prize')}\n"
+            f"Медиа: {event.get('media') or 'нет'}\n\n"
+            "Введите новые данные в формате:\n"
+            "Название | Дата и время | Описание | Приз | Медиа (или 'skip')"
         )
         await query.message.answer(current_details)
         await state.update_data(edit_event_id=eid)
@@ -328,10 +362,9 @@ async def event_edit_callback(query: types.CallbackQuery, state: FSMContext):
 
 @router.message(EventEditState.waiting_for_edit_details)
 async def process_event_edit(message: Message, state: FSMContext):
-    input_data = message.text
-    parts = [part.strip() for part in input_data.split("|")]
+    parts = [s.strip() for s in message.text.split("|")]
     if len(parts) < 5:
-        await message.answer("Неверный формат. Пожалуйста, используйте формат:\nНазвание | Дата и время | Описание | Приз | Медиа (или 'skip')")
+        await message.answer("Неверный формат. Используйте: Название | Дата и время | Описание | Приз | Медиа (или 'skip')")
         return
     title, datetime_str, description, prize, media = parts
     if media.lower() == "skip":
@@ -346,7 +379,7 @@ async def process_event_edit(message: Message, state: FSMContext):
     try:
         async with conn.cursor() as cur:
             await cur.execute(
-                "UPDATE events SET title=%s, datetime=%s, description=%s, prize=%s, media=%s WHERE id=%s",
+                "UPDATE events SET title=%s, datetime=%s, description=%s, prize=%s, media=%s WHERE id = %s",
                 (title, datetime_str, description, prize, media, eid)
             )
             await conn.commit()
@@ -359,8 +392,73 @@ async def process_event_edit(message: Message, state: FSMContext):
         await state.clear()
         await safe_close(conn)
 
+@router.callback_query(lambda q: q.data and q.data.startswith("event_publish:"))
+async def event_publish_callback(query: types.CallbackQuery, state: FSMContext):
+    eid_str = query.data.split(":", 1)[1]
+    try:
+        eid = int(eid_str)
+    except ValueError:
+        await query.answer("Неверные данные.", show_alert=True)
+        return
+    conn = await get_connection()
+    try:
+        async with conn.cursor(DictCursor) as cur:
+            await cur.execute("SELECT * FROM events WHERE id = %s", (eid,))
+            event = await cur.fetchone()
+        if not event:
+            await query.message.answer("Событие не найдено.")
+            return
+        publish_text = (
+            f"📢 Событие!\n\nНазвание: {event.get('title')}\n"
+            f"Дата и время: {event.get('datetime')}\n"
+            f"Описание: {event.get('description')}\n"
+            f"Приз: {event.get('prize')}"
+        )
+        if event.get("media"):
+            publish_text += f"\n(Медиа: {event.get('media')})"
+        published = {}
+        for ch in CHANNEL_IDS:
+            try:
+                sent = await query.bot.send_message(ch, publish_text)
+                published[str(ch)] = sent.message_id
+            except Exception as pub_e:
+                print(f"[События] Ошибка публикации в канале {ch}: {pub_e}")
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE events SET published = %s WHERE id = %s", (json.dumps(published), eid))
+            await conn.commit()
+        await query.message.answer("Событие опубликовано во всех каналах.")
+        print(f"[События] Событие {eid} опубликовано:", published)
+    except Exception as e:
+        await query.message.answer(f"Ошибка при публикации события: <code>{e}</code>")
+        print("[События ERROR при публикации]", e)
+    finally:
+        await safe_close(conn)
+        await query.answer()
+
+@router.callback_query(lambda q: q.data and q.data.startswith("event_delete:"))
+async def event_delete_callback(query: types.CallbackQuery, state: FSMContext):
+    eid_str = query.data.split(":", 1)[1]
+    try:
+        eid = int(eid_str)
+    except ValueError:
+        await query.answer("Неверные данные.", show_alert=True)
+        return
+    conn = await get_connection()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM events WHERE id = %s", (eid,))
+            await conn.commit()
+        await query.message.answer("Событие удалено.")
+        print(f"[События] Событие {eid} удалено")
+    except Exception as e:
+        await query.message.answer(f"Ошибка при удалении события: <code>{e}</code>")
+        print("[События ERROR при удалении]", e)
+    finally:
+        await safe_close(conn)
+        await query.answer()
+
 # =============================================================================
-# Раздел "Пользователи" и "Объявления" оставлены как заглушки для примера.
+# Остальные разделы (Пользователи, Объявления) оставлены заглушками для теста
 # =============================================================================
 @router.callback_query(lambda q: q.data == "admin_users_list")
 async def users_list_stub(query: types.CallbackQuery, state: FSMContext):

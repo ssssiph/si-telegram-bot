@@ -8,9 +8,9 @@ from aiomysql import DictCursor  # для получения результат�
 from database import get_connection
 
 router = Router()
-ADMIN_ID = 1016554094  # Замените на актуальный ID администратора
+ADMIN_ID = 1016554094  # Укажите актуальный ID администратора
 
-# Получаем список каналов для публикации событий (например: "-1001234567890,-1009876543210")
+# Получаем список каналов для публикации событий (если понадобится)
 channels_raw = os.getenv("CHANNEL_IDS", "")
 CHANNEL_IDS = [int(ch.strip()) for ch in channels_raw.split(",") if ch.strip()]
 
@@ -41,7 +41,7 @@ class EventCreation(StatesGroup):
     waiting_for_media = State()
 
 # =============================================================================
-# FSM для редактирования события – новый блок
+# FSM для редактирования события
 # =============================================================================
 class EventEditState(StatesGroup):
     waiting_for_edit_details = State()
@@ -64,7 +64,7 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Меню с кнопками: Обращения и События (остальные секции можно добавить позже)
+        # Меню с кнопками для секций: Обращения и События
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")],
             [InlineKeyboardButton(text="События", callback_data="admin_events_list")]
@@ -78,7 +78,7 @@ async def admin_panel(message: Message, state: FSMContext):
         await safe_close(conn)
 
 # =============================================================================
-# Раздел "Обращения" – рабочая версия (как в предыдущем варианте)
+# Раздел "Обращения" – как ранее, работает
 # =============================================================================
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Обращения] Запрос списка обращений")
@@ -196,7 +196,6 @@ async def process_contact_reply(message: Message, state: FSMContext):
 # =============================================================================
 # Раздел "События" – создание, публикация и редактирование событий
 # =============================================================================
-# Меню списка событий
 async def send_events_list_to_admin(dest_message: Message, state: FSMContext):
     print("[События] Получение списка событий")
     conn = await get_connection()
@@ -209,7 +208,6 @@ async def send_events_list_to_admin(dest_message: Message, state: FSMContext):
             await cur.execute("SELECT * FROM events ORDER BY datetime DESC LIMIT %s OFFSET %s", (per_page, offset))
             events = await cur.fetchall()
         buttons = []
-        # Кнопка для создания нового события
         buttons.append([InlineKeyboardButton(text="Создать событие", callback_data="event_create")])
         if events:
             for event in events:
@@ -249,7 +247,7 @@ async def events_page_nav(query: types.CallbackQuery, state: FSMContext):
     await send_events_list_to_admin(query.message, state)
     await query.answer()
 
-# Создание события (FSM EventCreation)
+# Создание нового события через FSM (EventCreation)
 @router.callback_query(lambda q: q.data == "event_create")
 async def event_create_callback(query: types.CallbackQuery, state: FSMContext):
     print("[События] Начало создания события")
@@ -458,7 +456,7 @@ async def event_delete_callback(query: types.CallbackQuery, state: FSMContext):
         await query.answer()
 
 # =============================================================================
-# Остальные разделы (Пользователи, Объявления) оставлены заглушками для теста
+# Раздел "Пользователи" и "Объявления" – заглушки для теста
 # =============================================================================
 @router.callback_query(lambda q: q.data == "admin_users_list")
 async def users_list_stub(query: types.CallbackQuery, state: FSMContext):

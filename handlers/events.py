@@ -4,7 +4,7 @@ from database import get_connection
 
 router = Router()
 
-@router.message(F.text.strip() == "🎯 События")
+@router.message(F.text.contains("События"))
 async def show_events(message: Message):
     conn = await get_connection()
     try:

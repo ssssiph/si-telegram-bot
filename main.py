@@ -36,8 +36,8 @@ async def ensure_director():
         exists = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", tg_id)
         if not exists:
             await conn.execute(
-                "INSERT INTO users (tg_id, username, rank, balance) VALUES ($1, $2, 'Генеральный директор', 0)"
-                tg_id, 'siph_director', 'Siph Director'
+                "INSERT INTO users (tg_id, username, rank, balance) VALUES ($1, $2, 'Генеральный директор', 0)",
+                tg_id, 'siph_director'
             )
         else:
             await conn.execute(

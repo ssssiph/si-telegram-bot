@@ -23,4 +23,4 @@ async def start_command(message: Message):
                 message.from_user.id
             )
 
-    await message.answer("Добро пожаловать в Siph Industry!", reply_markup=main_menu)
+    await message.answer(f"Добро пожаловать, {message.from_user.full_name}!", reply_markup=main_menu)

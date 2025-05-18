@@ -1,16 +1,18 @@
 import os
 import json
 from aiogram import Router, types, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
+from aiogram.types import (
+    Message, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
+)
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State    # для aiogram v3.x
-from aiomysql import DictCursor                    # для работы с результатами запросов в виде словаря
+from aiogram.fsm.state import StatesGroup, State  # для aiogram v3.x
+from aiomysql import DictCursor  # для работы с результатами запросов в виде словаря
 from database import get_connection
 
 router = Router()
-# Обратите внимание: фактический ID администратора равен 1016554091 (а не 1016554094)
+# Обратите внимание: фактический ID администратора должен быть верным.
 ADMIN_ID = 1016554091
-# Укажите PUBLISH_CHANNEL_ID как отрицательное число, если канал закрытый (например, -1002292957980)
+# Для каналов chat_id — обычно отрицательное число.
 PUBLISH_CHANNEL_ID = -1002292957980
 
 async def safe_close(conn):
@@ -45,18 +47,23 @@ class EventEditState(StatesGroup):
     waiting_for_edit_details = State()
 
 # =============================================================================
-# Обработка входящих сообщений от пользователей (обращения)
-# (Обрабатываются только сообщения от пользователей, отличных от администратора)
+# FSM для редактирования пользователей
+# =============================================================================
+class UserEditState(StatesGroup):
+    waiting_for_new_rank = State()
+
+# =============================================================================
+# Обработка входящих сообщений (обращений) от пользователей
+# (Сообщения из личного чата отправителя, если он не администратор, обрабатываются как обращения)
 # =============================================================================
 @router.message(lambda m: m.chat.type == "private" and m.from_user.id != ADMIN_ID)
 async def handle_incoming_contact(m: Message, state: FSMContext):
-    # Если уже активен FSM (например, при работе администратора), не обрабатываем это сообщение
+    # Если активен какой-либо FSM (например, админ обрабатывает событие), не обрабатываем сообщение как обращение.
     if await state.get_state() is not None:
         return
     conn = await get_connection()
     try:
-        sender_info = (f"{m.from_user.full_name} (@{m.from_user.username})"
-                       if m.from_user.username else m.from_user.full_name)
+        sender_info = f"{m.from_user.full_name} (@{m.from_user.username})" if m.from_user.username else m.from_user.full_name
         if m.content_type == "text":
             content = m.text
         else:
@@ -75,12 +82,11 @@ async def handle_incoming_contact(m: Message, state: FSMContext):
         conn.close()
 
 # =============================================================================
-# Главная админ-панель
+# Главная админ-панель – теперь три раздела: Обращения, События и Пользователи
 # =============================================================================
 @router.message(lambda message: message.text and message.text.strip().lower() == "⚙️ управление")
 async def admin_panel(message: Message, state: FSMContext):
-    # Сброс FSM-состояния, чтобы не мешали предыдущие процессы
-    await state.clear()
+    await state.clear()  # сбрасываем предыдущее состояние
     print("[Admin] Запуск панели для", message.from_user.id)
     conn = await get_connection()
     try:
@@ -94,9 +100,11 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
+        # Добавляем кнопку "Пользователи" в меню
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")],
-            [InlineKeyboardButton(text="События", callback_data="admin_events_list")]
+            [InlineKeyboardButton(text="События", callback_data="admin_events_list")],
+            [InlineKeyboardButton(text="Пользователи", callback_data="admin_users_list")]
         ])
         await message.answer("Панель управления. Выберите раздел:", reply_markup=kb)
         print("[Admin] Меню выведено")
@@ -201,7 +209,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
             await state.clear()
             return
         original_text = contact.get("message") or "Нет текста обращения."
-        author_info = f"{contact.get('full_name', '-')}" + (f" (@{contact.get('username', '-')})" if contact.get("username") else "")
+        author_info = f"{contact.get('full_name','-')}" + (f" (@{contact.get('username','-')})" if contact.get("username") else "")
         header = f"Ваше обращение от {author_info}:\n\n{original_text}\n\nОтвет от администрации:"
         if message.content_type == "text":
             await message.bot.send_message(target_id, header + "\n\n" + message.text)
@@ -503,13 +511,138 @@ async def event_delete_callback(query: types.CallbackQuery, state: FSMContext):
         await query.answer()
 
 # =============================================================================
-# Заглушки для разделов "Пользователи" и "Объявления"
+# Раздел "Пользователи"
 # =============================================================================
+async def send_users_list_to_admin(dest_message: Message, state: FSMContext):
+    print("[Users] Получение списка пользователей")
+    conn = await get_connection()
+    try:
+        data = await state.get_data()
+        page = data.get("users_page", 1)
+        per_page = 9
+        offset = (page - 1) * per_page
+        async with conn.cursor(DictCursor) as cur:
+            await cur.execute("SELECT * FROM users ORDER BY id DESC LIMIT %s OFFSET %s", (per_page, offset))
+            users = await cur.fetchall()
+        buttons = []
+        if users:
+            for user in users:
+                tg_id = user.get("tg_id")
+                full_name = user.get("full_name") or "-"
+                username = user.get("username") or "-"
+                rank = user.get("rank") or "-"
+                btn_text = f"{full_name} (@{username}) | {rank}"
+                # При нажатии выводим панель редактирования для пользователя
+                buttons.append(
+                    [InlineKeyboardButton(text=btn_text, callback_data=f"user_edit:{tg_id}")]
+                )
+            if len(users) == per_page:
+                buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="users_page:next")])
+        else:
+            buttons.append([InlineKeyboardButton(text="Нет пользователей", callback_data="none")])
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await dest_message.answer("Пользователи:", reply_markup=kb)
+        print("[Users] Список пользователей отправлен")
+    except Exception as e:
+        await dest_message.answer(f"Ошибка при получении пользователей: <code>{e}</code>")
+        print("[Users ERROR при получении]", e)
+    finally:
+        await safe_close(conn)
+
 @router.callback_query(lambda q: q.data == "admin_users_list")
-async def users_list_stub(query: types.CallbackQuery, state: FSMContext):
-    await query.message.answer("Секция 'Пользователи' пока не реализована.")
+async def admin_users_list_callback(query: types.CallbackQuery, state: FSMContext):
+    await send_users_list_to_admin(query.message, state)
     await query.answer()
 
+@router.callback_query(lambda q: q.data and q.data.startswith("users_page:"))
+async def users_page_nav(query: types.CallbackQuery, state: FSMContext):
+    direction = query.data.split(":", 1)[1]
+    data = await state.get_data()
+    page = data.get("users_page", 1)
+    page = page + 1 if direction == "next" else max(1, page - 1)
+    await state.update_data(users_page=page)
+    await send_users_list_to_admin(query.message, state)
+    await query.answer()
+
+@router.callback_query(lambda q: q.data and q.data.startswith("user_edit:"))
+async def user_edit_callback(query: types.CallbackQuery, state: FSMContext):
+    tg_id_str = query.data.split(":", 1)[1]
+    try:
+        tg_id = int(tg_id_str)
+    except ValueError:
+        await query.answer("Неверные данные.", show_alert=True)
+        return
+    conn = await get_connection()
+    try:
+        async with conn.cursor(DictCursor) as cur:
+            await cur.execute("SELECT * FROM users WHERE tg_id = %s", (tg_id,))
+            user = await cur.fetchone()
+        if not user:
+            await query.message.answer("Пользователь не найден.")
+            return
+        details = (
+            f"Пользователь: {user.get('full_name')} (@{user.get('username')})\n"
+            f"Текущий ранг: {user.get('rank')}\n\n"
+            "Введите новый ранг для этого пользователя:"
+        )
+        await query.message.answer(details)
+        await state.update_data(edit_user_id=tg_id)
+        await state.set_state(UserEditState.waiting_for_new_rank)
+        await query.answer("Редактирование пользователя начато.")
+    except Exception as e:
+        await query.message.answer(f"Ошибка при получении пользователя: <code>{e}</code>")
+        print("[Users ERROR при редактировании]", e)
+    finally:
+        await safe_close(conn)
+
+@router.message(UserEditState.waiting_for_new_rank)
+async def process_user_edit(message: Message, state: FSMContext):
+    new_rank = message.text.strip()
+    data = await state.get_data()
+    tg_id = data.get("edit_user_id")
+    if not tg_id:
+        await message.answer("Ошибка: пользователь не найден.")
+        await state.clear()
+        return
+    conn = await get_connection()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE users SET rank = %s WHERE tg_id = %s", (new_rank, tg_id))
+            await conn.commit()
+        await message.answer("Ранг пользователя обновлён.")
+        print(f"[Users] Ранг пользователя {tg_id} обновлён на: {new_rank}")
+    except Exception as e:
+        await message.answer(f"Ошибка при обновлении пользователя: <code>{e}</code>")
+        print("[Users ERROR при обновлении]", e)
+    finally:
+        await state.clear()
+        await safe_close(conn)
+
+@router.callback_query(lambda q: q.data and q.data.startswith("user_delete:"))
+async def user_delete_callback(query: types.CallbackQuery, state: FSMContext):
+    tg_id_str = query.data.split(":", 1)[1]
+    try:
+        tg_id = int(tg_id_str)
+    except ValueError:
+        await query.answer("Неверные данные.", show_alert=True)
+        return
+    conn = await get_connection()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM users WHERE tg_id = %s", (tg_id,))
+            await conn.commit()
+        await query.message.answer("Пользователь удалён.")
+        print(f"[Users] Пользователь {tg_id} удалён")
+    except Exception as e:
+        await query.message.answer(f"Ошибка при удалении пользователя: <code>{e}</code>")
+        print("[Users ERROR при удалении]", e)
+    finally:
+        await safe_close(conn)
+        await query.answer()
+
+# =============================================================================
+# Заглушки для разделов "Объявления"
+# =============================================================================
 @router.callback_query(lambda q: q.data == "admin_broadcast")
 async def broadcast_stub(query: types.CallbackQuery, state: FSMContext):
     await query.message.answer("Секция 'Объявления' пока не реализована.")

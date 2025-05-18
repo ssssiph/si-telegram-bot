@@ -4,7 +4,7 @@ from database import get_connection
 
 router = Router()
 
-@router.message(F.text == "👤 Аккаунт")
+@router.message(F.text.strip() == "👤 Аккаунт")
 async def account_info(message: Message):
     async with await get_connection() as conn:
         user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)

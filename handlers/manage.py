@@ -4,14 +4,14 @@ import re
 from aiogram import Router, F, types
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State  # Исправленный импорт для aiogram v3.x
+from aiogram.fsm.state import StatesGroup, State  # для aiogram v3.x
 from aiomysql import DictCursor  # для получения результатов в виде словаря
 from database import get_connection
 
 router = Router()
-ADMIN_ID = 1016554094  # Замените на актуальный ID администратора (например, Генеральный директор)
+ADMIN_ID = 1016554094  # Замените на актуальный ID администратора
 
-# Получаем список каналов для публикации событий из переменной окружения, например: "-1001234567890,-1009876543210"
+# Получаем список каналов для публикации событий из env, например: "-1001234567890,-1009876543210"
 channels_raw = os.getenv("CHANNEL_IDS", "")
 CHANNEL_IDS = [int(ch.strip()) for ch in channels_raw.split(",") if ch.strip()]
 
@@ -22,15 +22,17 @@ async def safe_close(conn):
             ret = conn.close()
             if ret is not None and hasattr(ret, '__await__'):
                 await ret
-        except Exception:
+        except Exception as ex:
+            print("safe_close error:", ex)
             pass
 
 # ================================  
 #          ГЛАВНАЯ АДМИН-ПАНЕЛЬ  
 # ================================  
 
-@router.message(lambda message: message.text is not None and message.text.strip() == "⚙️ Управление")
+@router.message(lambda message: message.text and message.text.strip() == "⚙️ Управление")
 async def admin_panel(message: Message, state: FSMContext):
+    print("[Admin Panel] Запуск главного раздела для", message.from_user.id)
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
@@ -43,16 +45,17 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Inline‑клавиатура с четырьмя разделами
-        inline_kb = InlineKeyboardMarkup(inline_keyboard=[
+        kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")],
             [InlineKeyboardButton(text="События", callback_data="admin_events_list")],
             [InlineKeyboardButton(text="Пользователи", callback_data="admin_users_list")],
             [InlineKeyboardButton(text="Объявления", callback_data="admin_broadcast")]
         ])
-        await message.answer("Панель управления. Выберите раздел:", reply_markup=inline_kb)
+        await message.answer("Панель управления. Выберите раздел:", reply_markup=kb)
+        print("[Admin Panel] Панель выведена")
     except Exception as e:
         await message.answer(f"Ошибка в админке:\n<code>{e}</code>")
+        print("[Admin Panel ERROR]", e)
     finally:
         await safe_close(conn)
 
@@ -61,6 +64,7 @@ async def admin_panel(message: Message, state: FSMContext):
 # ================================  
 
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
+    print("[Обращения] Получение списка обращений")
     conn = await get_connection()
     try:
         data = await state.get_data()
@@ -90,13 +94,16 @@ async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
             buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="contacts_page:next")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
         await dest_message.answer("Список обращений:", reply_markup=kb)
+        print("[Обращения] Список отправлен")
     except Exception as e:
         await dest_message.answer(f"Ошибка при получении обращений: <code>{e}</code>")
+        print("[Обращения ERROR]", e)
     finally:
         await safe_close(conn)
 
 @router.callback_query(lambda query: query.data == "admin_contacts_list")
 async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMContext):
+    print("[Обращения] Нажата кнопка 'Обращения'")
     await send_contacts_list_to_admin(query.message, state)
     await query.answer()
 
@@ -105,6 +112,7 @@ async def contacts_page_nav(query: types.CallbackQuery, state: FSMContext):
     direction = query.data.split(":", 1)[1]
     data = await state.get_data()
     page = data.get("contacts_page", 1)
+    print(f"[Обращения] Навигация по страницам, текущая страница {page}, направление: {direction}")
     if direction == "next":
         page += 1
     else:
@@ -122,6 +130,7 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
         await query.answer("Неверные данные.", show_alert=True)
         return
     await state.update_data(contact_reply_id=contact_id)
+    print(f"[Обращения] Выбрано обращение {contact_id} для ответа")
     await query.message.answer("Введите ответ для данного обращения:")
     await query.answer("Ожидается ваш ответ.")
 
@@ -129,6 +138,7 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
 async def process_contact_reply(message: Message, state: FSMContext):
     data = await state.get_data()
     if "contact_reply_id" not in data or not data["contact_reply_id"]:
+        print("[Обращения] Нет выбранного обращения для ответа")
         return
     contact_id = data["contact_reply_id"]
     conn = await get_connection()
@@ -147,6 +157,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
         if not target_user_id:
             await message.answer("Ошибка: у обращения отсутствует tg_id.")
             return
+        print(f"[Обращения] Отправка ответа пользователю {target_user_id}")
         if message.content_type == 'text':
             await message.bot.send_message(target_user_id, f"📨 Ответ от администрации:\n\n{message.text}")
         else:
@@ -159,6 +170,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
         await send_contacts_list_to_admin(message, state)
     except Exception as e:
         await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
+        print("[Обращения ERROR при ответе]", e)
     finally:
         current_state = await state.get_data()
         new_state = {}
@@ -171,7 +183,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
 #          РАЗДЕЛ "СОБЫТИЯ"  
 # ================================  
 
-# Состояния для создания события
+# FSM для создания события
 class EventCreation(StatesGroup):
     waiting_for_title = State()
     waiting_for_datetime = State()
@@ -180,6 +192,7 @@ class EventCreation(StatesGroup):
 
 @router.callback_query(lambda q: q.data == "event_create")
 async def event_create_callback(query: types.CallbackQuery, state: FSMContext):
+    print("[События] Начало создания события")
     await query.message.answer("Введите название события:")
     await EventCreation.waiting_for_title.set()
     await query.answer()
@@ -189,18 +202,21 @@ async def process_event_title(message: Message, state: FSMContext):
     await state.update_data(event_title=message.text)
     await message.answer("Введите дату и время события:")
     await EventCreation.next()
+    print("[События] Получено название:", message.text)
 
 @router.message(EventCreation.waiting_for_datetime)
 async def process_event_datetime(message: Message, state: FSMContext):
     await state.update_data(event_datetime=message.text)
     await message.answer("Введите описание события:")
     await EventCreation.next()
+    print("[События] Получена дата и время:", message.text)
 
 @router.message(EventCreation.waiting_for_description)
 async def process_event_description(message: Message, state: FSMContext):
     await state.update_data(event_description=message.text)
     await message.answer("Введите приз (или оставьте пустым):")
     await EventCreation.next()
+    print("[События] Получено описание:", message.text)
 
 @router.message(EventCreation.waiting_for_prize)
 async def process_event_prize(message: Message, state: FSMContext):
@@ -212,7 +228,7 @@ async def process_event_prize(message: Message, state: FSMContext):
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            # Таблица events должна содержать колонку published (TEXT) для хранения JSON опубликованных сообщений
+            # Предполагается, что в таблице events есть колонка published (TEXT)
             await cur.execute(
                 "INSERT INTO events (title, description, prize, datetime, media, creator_id, published) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (title, description, prize, datetime_str, "", message.from_user.id, "{}")
@@ -226,8 +242,10 @@ async def process_event_prize(message: Message, state: FSMContext):
                                  [InlineKeyboardButton(text="Удалить событие", callback_data=f"event_delete:{event_id}")],
                                  [InlineKeyboardButton(text="Назад", callback_data="admin_events_list")]
                              ]))
+        print("[События] Событие создано с ID:", event_id)
     except Exception as e:
         await message.answer(f"Ошибка при создании события: <code>{e}</code>")
+        print("[События ERROR при создании]", e)
     finally:
         await state.clear()
         await safe_close(conn)
@@ -266,8 +284,10 @@ async def send_events_list_to_admin(dest_message: Message, state: FSMContext):
             buttons.append([InlineKeyboardButton(text="Нет событий", callback_data="none")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
         await dest_message.answer("События:", reply_markup=kb)
+        print("[События] Список событий отправлен")
     except Exception as e:
         await dest_message.answer(f"Ошибка при получении событий: <code>{e}</code>")
+        print("[События ERROR при получении]", e)
     finally:
         await safe_close(conn)
 
@@ -300,20 +320,25 @@ async def event_publish_callback(query: types.CallbackQuery, state: FSMContext):
         if not event:
             await query.message.answer("Событие не найдено.")
             return
-        publish_text = f"📢 Событие!\n\nНазвание: {event.get('title')}\nДата и время: {event.get('datetime')}\nОписание: {event.get('description')}\nПриз: {event.get('prize')}"
+        publish_text = (
+            f"📢 Событие!\n\nНазвание: {event.get('title')}\nДата и время: {event.get('datetime')}\n"
+            f"Описание: {event.get('description')}\nПриз: {event.get('prize')}"
+        )
         published = {}  # маппинг: channel_id -> message_id
         for ch in CHANNEL_IDS:
             try:
                 sent = await query.bot.send_message(ch, publish_text)
                 published[str(ch)] = sent.message_id
             except Exception as pub_e:
-                print(f"Ошибка публикации в канале {ch}: {pub_e}")
+                print(f"[События] Ошибка публикации в канале {ch}: {pub_e}")
         async with conn.cursor() as cur:
             await cur.execute("UPDATE events SET published = %s WHERE id = %s", (json.dumps(published), event_id))
             await conn.commit()
         await query.message.answer("Событие опубликовано во всех каналах.")
+        print(f"[События] Событие {event_id} опубликовано:", published)
     except Exception as e:
         await query.message.answer(f"Ошибка при публикации события: <code>{e}</code>")
+        print("[События ERROR при публикации]", e)
     finally:
         await safe_close(conn)
         await query.answer()
@@ -343,8 +368,10 @@ async def event_delete_callback(query: types.CallbackQuery, state: FSMContext):
             await cur.execute("DELETE FROM events WHERE id = %s", (event_id,))
             await conn.commit()
         await query.message.answer("Событие удалено.")
+        print(f"[События] Событие {event_id} удалено")
     except Exception as e:
         await query.message.answer(f"Ошибка при удалении события: <code>{e}</code>")
+        print("[События ERROR при удалении]", e)
     finally:
         await safe_close(conn)
         await query.answer()
@@ -382,8 +409,10 @@ async def send_users_list_to_admin(dest_message: Message, state: FSMContext):
             buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="users_page:next")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
         await dest_message.answer("Пользователи:", reply_markup=kb)
+        print("[Пользователи] Список пользователей отправлен")
     except Exception as e:
         await dest_message.answer(f"Ошибка при получении пользователей: <code>{e}</code>")
+        print("[Пользователи ERROR]", e)
     finally:
         await safe_close(conn)
 
@@ -432,13 +461,15 @@ async def user_manage_callback(query: types.CallbackQuery, state: FSMContext):
         options.append(InlineKeyboardButton(text="Назад", callback_data="admin_users_list"))
         kb = InlineKeyboardMarkup(inline_keyboard=[options])
         await query.message.answer("Управление пользователем:", reply_markup=kb)
+        print(f"[Пользователи] Открыто управление для пользователя {user_id}")
         await query.answer()
     except Exception as e:
         await query.message.answer(f"Ошибка при получении данных пользователя: <code>{e}</code>")
+        print("[Пользователи ERROR при управлении]", e)
     finally:
         await safe_close(conn)
 
-# Состояния для изменения баланса
+# Состояния для изменения баланса (алмазики)
 class UserDiamondState(StatesGroup):
     waiting_for_diamond_value = State()
 
@@ -454,6 +485,7 @@ async def user_diamond_callback(query: types.CallbackQuery, state: FSMContext):
     await state.update_data(manage_user_id=user_id, diamond_action=action)
     await query.message.answer("Введите количество алмазиков:")
     await UserDiamondState.waiting_for_diamond_value.set()
+    print(f"[Пользователи] Запрошено изменение баланса для {user_id}, действие {action}")
     await query.answer()
 
 @router.message(UserDiamondState.waiting_for_diamond_value)
@@ -480,8 +512,10 @@ async def process_diamond_change(message: Message, state: FSMContext):
             notification = f"У вас было снято {value} 💎."
         await message.bot.send_message(user_id, notification)
         await message.answer("Баланс обновлен.")
+        print(f"[Пользователи] Баланс изменен для {user_id}: {action} {value}")
     except Exception as e:
         await message.answer(f"Ошибка при изменении баланса: <code>{e}</code>")
+        print("[Пользователи ERROR при балансе]", e)
     finally:
         await state.clear()
         await safe_close(conn)
@@ -508,10 +542,12 @@ async def user_toggle_callback(query: types.CallbackQuery, state: FSMContext):
             await cur.execute("UPDATE users SET blocked = %s WHERE tg_id = %s", (new_block, user_id))
             await conn.commit()
         await query.message.answer("Статус блокировки обновлен.")
+        print(f"[Пользователи] Статус блокировки изменен для {user_id} на {new_block}")
         await query.answer()
         await send_users_list_to_admin(query.message, state)
     except Exception as e:
         await query.message.answer(f"Ошибка при изменении статуса: <code>{e}</code>")
+        print("[Пользователи ERROR при блокировке]", e)
     finally:
         await safe_close(conn)
 
@@ -519,7 +555,6 @@ async def user_toggle_callback(query: types.CallbackQuery, state: FSMContext):
 #         РАЗДЕЛ "ОБЪЯВЛЕНИЯ"  
 # ================================  
 
-# Состояния для рассылки объявления
 class BroadcastState(StatesGroup):
     waiting_for_broadcast_text = State()
 
@@ -527,6 +562,7 @@ class BroadcastState(StatesGroup):
 async def broadcast_callback(query: types.CallbackQuery, state: FSMContext):
     await query.message.answer("Введите текст объявления для рассылки всем пользователям:")
     await BroadcastState.waiting_for_broadcast_text.set()
+    print("[Объявления] Начало рассылки объявления")
     await query.answer()
 
 @router.message(BroadcastState.waiting_for_broadcast_text)
@@ -539,14 +575,17 @@ async def process_broadcast(message: Message, state: FSMContext):
             users = await cur.fetchall()
         count = 0
         for user in users:
+            tg_id = user.get("tg_id")
             try:
-                await message.bot.send_message(user.get("tg_id"), f"📣 Объявление:\n\n{announcement}")
+                await message.bot.send_message(tg_id, f"📣 Объявление:\n\n{announcement}")
                 count += 1
             except Exception as e:
-                print(f"Ошибка отправки объявления пользователю {user.get('tg_id')}: {e}")
+                print(f"[Объявления] Ошибка отправки объявления пользователю {tg_id}: {e}")
         await message.answer(f"Объявление отправлено {count} пользователям.")
+        print(f"[Объявления] Рассказано {count} пользователям")
     except Exception as e:
         await message.answer(f"Ошибка при рассылке объявления: <code>{e}</code>")
+        print("[Объявления ERROR]", e)
     finally:
         await state.clear()
         await safe_close(conn)

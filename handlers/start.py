@@ -15,7 +15,7 @@ async def start_command(message: Message):
                 "INSERT INTO users (tg_id, username, full_name, rank, balance) VALUES ($1, $2, $3, 'Гость', 0)",
                 message.from_user.id,
                 message.from_user.username or "",
-                message.from_user.full_name or ""
+                message.from_user.full_name or "-"
             )
 
         if message.from_user.id == 1016554091:
@@ -24,6 +24,6 @@ async def start_command(message: Message):
                 message.from_user.id
             )
 
-        await message.answer(f"Добро пожаловать, {message.from_user.full_name}!", reply_markup=main_menu)
+        await message.answer(f"Добро пожаловать, {message.from_user.full_name or '-'}!", reply_markup=main_menu)
     finally:
         await conn.close()

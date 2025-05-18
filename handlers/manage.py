@@ -6,7 +6,7 @@ from database import get_connection
 
 router = Router()
 
-@router.message(lambda message: message.text is not None and message.text.strip() == "⚙️ Панель управление")
+@router.message(lambda message: message.text is not None and message.text.strip() == "⚙️ Управление")
 async def admin_panel(message: Message):
     conn = await get_connection()
     try:

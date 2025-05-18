@@ -7,7 +7,7 @@ router = Router()
 
 @router.message(F.text.contains("Управление"))
 async def admin_panel(message: Message):
-    print("Кнопка 'Управление' нажата")
+    print(f"Получено сообщение: {message.text}")
 
     conn = await get_connection()
     try:

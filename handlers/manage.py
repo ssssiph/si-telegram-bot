@@ -6,28 +6,45 @@ from database import get_connection
 router = Router()
 ADMIN_ID = 1016554091  # ID администратора
 
-# Обработчик для кнопки "Связь" в административном меню
-@router.message(lambda message: message.text is not None and message.text.strip() == "Связь")
-async def admin_contacts_list(message: Message, state: FSMContext):
+# ---------------------------------------------
+# Обработчик для кнопки "⚙️ Управление" из главного меню
+# ---------------------------------------------
+@router.message(lambda message: message.text is not None and message.text.strip() == "⚙️ Управление")
+async def admin_panel(message: Message, state: FSMContext):
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            # Проверяем, есть ли пользователь в базе и его ранг
             await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (message.from_user.id,))
             result = await cur.fetchone()
             if not result:
                 await message.answer("❗ Пользователь не найден. Отправьте /start для регистрации.")
                 return
             user_rank = result[0]
-        # Если ранг не "Генеральный директор" – отказ
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
+        # Формируем inline-клавиатуру для админпанели – одна кнопка "Связь"
+        inline_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Связь", callback_data="admin_contacts_list")]
+        ])
+        await message.answer("Тестик", reply_markup=inline_kb)
+    except Exception as e:
+        await message.answer(f"Ошибка в админке:\n<code>{e}</code>")
+    finally:
+        if conn is not None:
+            await conn.close()
 
-        # Получаем номер страницы из состояния (по умолчанию 1)
+# -------------------------------------------------
+# Callback для отображения списка обращений после нажатия "Связь"
+# -------------------------------------------------
+@router.callback_query(lambda query: query.data == "admin_contacts_list")
+async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMContext):
+    conn = await get_connection()
+    try:
+        # Получаем номер страницы (по умолчанию 1)
         data = await state.get_data()
         page = data.get("contacts_page", 1)
-        contacts_per_page = 9  # показываем 9 обращений на странице
+        contacts_per_page = 9
         offset = (page - 1) * contacts_per_page
 
         async with conn.cursor(dictionary=True) as cur:
@@ -37,10 +54,11 @@ async def admin_contacts_list(message: Message, state: FSMContext):
             )
             contacts = await cur.fetchall()
         if not contacts:
-            await message.answer("Нет новых обращений.")
+            await query.message.edit_text("Нет новых обращений.")
+            await query.answer()
             return
 
-        # Формируем inline-клавиатуру с обращениями
+        # Формируем inline-клавиатуру: для каждого обращения отдельная кнопка
         buttons = []
         for contact in contacts:
             full_name = (contact.get("full_name") or "-").strip()
@@ -49,21 +67,23 @@ async def admin_contacts_list(message: Message, state: FSMContext):
             button_text = f"{full_name} ({username} | {contact_id})"
             callback_data = f"contact_reply:{contact_id}"
             buttons.append([InlineKeyboardButton(text=button_text, callback_data=callback_data)])
-        # Если записей ровно contacts_per_page, добавляем кнопку для перехода на следующую страницу
+        # Если записей ровно contacts_per_page, добавляем кнопку навигации
         if len(contacts) == contacts_per_page:
             buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="contacts_page:next")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-        # Отправляем сообщение с текстом "Тестик" и прикрепленной клавиатурой
-        await message.answer("Тестик", reply_markup=kb)
+        await query.message.edit_text("Список обращений:", reply_markup=kb)
+        await query.answer()
     except Exception as e:
-        await message.answer(f"Ошибка при получении обращений: <code>{e}</code>")
+        await query.message.answer(f"Ошибка при получении обращений: <code>{e}</code>")
     finally:
         if conn is not None:
             await conn.close()
 
-# Обработчик навигации между страницами обращений
+# -------------------------------------------------
+# Callback для навигации по страницам списка обращений
+# -------------------------------------------------
 @router.callback_query(lambda q: q.data and q.data.startswith("contacts_page:"))
-async def contacts_page_callback(query: types.CallbackQuery, state: FSMContext):
+async def contacts_page_nav(query: types.CallbackQuery, state: FSMContext):
     direction = query.data.split(":", 1)[1]
     data = await state.get_data()
     page = data.get("contacts_page", 1)
@@ -72,12 +92,13 @@ async def contacts_page_callback(query: types.CallbackQuery, state: FSMContext):
     else:
         page = max(1, page - 1)
     await state.update_data(contacts_page=page)
-    await admin_contacts_list(query.message, state)
-    await query.answer()
+    await admin_contacts_list_callback(query, state)
 
-# Обработчик для выбора конкретного обращения
+# -------------------------------------------------
+# Callback при выборе конкретного обращения
+# -------------------------------------------------
 @router.callback_query(lambda q: q.data and q.data.startswith("contact_reply:"))
-async def contact_reply_callback(query: types.CallbackQuery, state: FSMContext):
+async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
     contact_id_str = query.data.split(":", 1)[1]
     try:
         contact_id = int(contact_id_str)
@@ -88,12 +109,14 @@ async def contact_reply_callback(query: types.CallbackQuery, state: FSMContext):
     await query.message.answer("Введите ответ для данного обращения:")
     await query.answer("Ожидается ваш ответ.")
 
-# Обработчик текста ответа от администратора (для выбранного обращения)
+# -------------------------------------------------
+# Обработчик для ответа администрации на выбранное обращение
+# -------------------------------------------------
 @router.message(lambda m: m.from_user.id == ADMIN_ID)
 async def process_contact_reply(message: Message, state: FSMContext):
     data = await state.get_data()
     if "contact_reply_id" not in data:
-        return  # Если нет ожидаемого обращения, игнорируем сообщение
+        return  # Если обращение не выбрано, игнорируем сообщение
     contact_id = data["contact_reply_id"]
     conn = await get_connection()
     try:

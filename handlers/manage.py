@@ -5,12 +5,13 @@ from database import get_connection
 
 router = Router()
 
-@router.message(F.text.strip() == "🛠 Управление")
+@router.message(F.text.contains("Управление"))
 async def admin_panel(message: Message):
+    print(f"Получено сообщение: {message.text}")
+
     conn = await get_connection()
     try:
         user = await conn.fetchrow("SELECT rank FROM users WHERE tg_id = $1", message.from_user.id)
-        print(f"👤 Пользователь: {user}")
         if not user or user["rank"] != "Генеральный директор":
             await message.answer("❌ У вас нет доступа к управлению.")
             return

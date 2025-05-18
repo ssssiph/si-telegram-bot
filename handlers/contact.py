@@ -4,8 +4,6 @@ from database import get_connection
 
 router = Router()
 
-user_messages = {}
-
 @router.message(F.text.strip() == "📩 Связь")
 async def contact_intro(message: Message):
     await message.answer("✉️ Напиши сообщение, которое ты хочешь отправить администрации.")
@@ -22,8 +20,6 @@ async def catch_contact_message(message: Message):
                     message.from_user.username or "",
                     message.from_user.full_name or ""
                 )
-
-            user_messages[message.from_user.id] = message.text.strip()
 
             await message.answer("📨 Сообщение отправлено администрации.")
 

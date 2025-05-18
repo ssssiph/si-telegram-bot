@@ -9,7 +9,7 @@ from aiomysql import DictCursor  # для получения результат�
 from database import get_connection
 
 router = Router()
-ADMIN_ID = 1016554094  # Замените на актуальный ID администратора (например, Генеральный директор)
+ADMIN_ID = 1016554094  # Замените на актуальный ID администратора
 
 # Получаем список каналов для публикации событий из переменной окружения,
 # например: "-1001234567890,-1009876543210"
@@ -25,40 +25,38 @@ async def safe_close(conn):
                 await ret
         except Exception as ex:
             print("safe_close error:", ex)
-            pass
 
-# ================================  
-#         FSM для ответов на обращения
-# ================================
+# =========================
+# FSM для ответа на обращение
+# =========================
 class ContactReplyState(StatesGroup):
     waiting_for_reply = State()
 
-# ================================  
-#         FSM для создания события
-# ================================
+# =========================
+# FSM для создания события
+# =========================
 class EventCreation(StatesGroup):
     waiting_for_title = State()
     waiting_for_datetime = State()
     waiting_for_description = State()
     waiting_for_prize = State()
-    waiting_for_media = State()  # опционально
+    waiting_for_media = State()
 
-# ================================  
-#         FSM для изменения ранга пользователя
-# ================================
+# =========================
+# FSM для изменения ранга пользователя
+# =========================
 class UserRankState(StatesGroup):
     waiting_for_new_rank = State()
 
-# ================================  
-#         FSM для рассылки объявления
-# ================================
+# =========================
+# FSM для рассылки объявления
+# =========================
 class BroadcastState(StatesGroup):
     waiting_for_broadcast = State()
 
-# =========================================  
-#         ГЛАВНАЯ АДМИН-ПАНЕЛЬ  
-# =========================================  
-
+# =========================================
+# ГЛАВНАЯ АДМИН-ПАНЕЛЬ
+# =========================================
 @router.message(lambda message: message.text and message.text.strip() == "⚙️ Управление")
 async def admin_panel(message: Message, state: FSMContext):
     print("[Admin] Запуск панели для", message.from_user.id)
@@ -74,7 +72,6 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Меню разделов
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")],
             [InlineKeyboardButton(text="События", callback_data="admin_events_list")],
@@ -89,10 +86,9 @@ async def admin_panel(message: Message, state: FSMContext):
     finally:
         await safe_close(conn)
 
-# =========================================  
-#          РАЗДЕЛ "ОБРАЩЕНИЯ"  
-# =========================================  
-
+# =========================================
+# РАЗДЕЛ "ОБРАЩЕНИЯ"
+# =========================================
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Обращения] Запрос списка обращений")
     conn = await get_connection()
@@ -173,6 +169,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
         return
     conn = await get_connection()
     try:
+        # Обновляем запись в таблице, что обращение обработано
         async with conn.cursor() as cur:
             await cur.execute("UPDATE contacts SET answered = TRUE WHERE id = %s", (cid,))
             await conn.commit()
@@ -189,6 +186,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
             await state.clear()
             return
         print(f"[Обращения] Отправка ответа пользователю {target_user_id}")
+        # Если текстовый ответ — отправляем как текст; иначе пересылаем сообщение
         if message.content_type == 'text':
             await message.bot.send_message(target_user_id, f"📨 Ответ от администрации:\n\n{message.text}")
         else:
@@ -206,10 +204,9 @@ async def process_contact_reply(message: Message, state: FSMContext):
         await safe_close(conn)
         await send_contacts_list_to_admin(message, state)
 
-# =========================================  
-#             РАЗДЕЛ "СОБЫТИЯ"  
-# =========================================  
-
+# =========================================
+# РАЗДЕЛ "СОБЫТИЯ"
+# =========================================
 @router.callback_query(lambda q: q.data == "event_create")
 async def event_create_callback(query: types.CallbackQuery, state: FSMContext):
     print("[События] Начало создания события")
@@ -229,7 +226,7 @@ async def process_event_datetime(message: Message, state: FSMContext):
     await state.update_data(event_datetime=message.text)
     await message.answer("Введите описание события:")
     await EventCreation.next()
-    print("[События] Дата и время:", message.text)
+    print("[События] Дата-время:", message.text)
 
 @router.message(EventCreation.waiting_for_description)
 async def process_event_description(message: Message, state: FSMContext):
@@ -241,7 +238,7 @@ async def process_event_description(message: Message, state: FSMContext):
 @router.message(EventCreation.waiting_for_prize)
 async def process_event_prize(message: Message, state: FSMContext):
     await state.update_data(event_prize=message.text)
-    await message.answer("Отправьте изображение или голосовое сообщение для события или напишите 'skip':")
+    await message.answer("Отправьте изображение или голосовое сообщение для события или введите 'skip':")
     await EventCreation.next()
     print("[События] Приз:", message.text)
 
@@ -255,7 +252,7 @@ async def process_event_media(message: Message, state: FSMContext):
             media = message.photo[-1].file_id
         elif message.voice:
             media = message.voice.file_id
-        # можно добавить другие типы
+        # Если ни фото, ни голосовое — оставляем media пустым
     data = await state.get_data()
     title = data.get("event_title")
     datetime_str = data.get("event_datetime")
@@ -413,10 +410,9 @@ async def event_delete_callback(query: types.CallbackQuery, state: FSMContext):
         await safe_close(conn)
         await query.answer()
 
-# =========================================  
-#           РАЗДЕЛ "ПОЛЬЗОВАТЕЛИ"  
-# =========================================  
-
+# =========================================
+# РАЗДЕЛ "ПОЛЬЗОВАТЕЛИ"
+# =========================================
 async def send_users_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Пользователи] Получение списка пользователей")
     conn = await get_connection()
@@ -508,7 +504,7 @@ async def user_manage_callback(query: types.CallbackQuery, state: FSMContext):
         options.append(InlineKeyboardButton(text="Назад", callback_data="admin_users_list"))
         kb = InlineKeyboardMarkup(inline_keyboard=[options])
         await query.message.answer("Управление пользователем:", reply_markup=kb)
-        print(f"[Пользователи] Открыто управление для пользователя {uid}")
+        print(f"[Пользователи] Управление для пользователя {uid} открыто")
         await query.answer()
     except Exception as e:
         await query.message.answer(f"Ошибка при получении данных пользователя: <code>{e}</code>")
@@ -532,7 +528,7 @@ async def user_diamond_callback(query: types.CallbackQuery, state: FSMContext):
     await state.update_data(manage_user_id=uid, diamond_action=action)
     await query.message.answer("Введите количество алмазиков:")
     await UserDiamondState.waiting_for_diamond_value.set()
-    print(f"[Пользователи] Изменение баланса для {uid}, действие {action}")
+    print(f"[Пользователи] Запрошено изменение баланса для {uid}, действие {action}")
     await query.answer()
 
 @router.message(UserDiamondState.waiting_for_diamond_value)
@@ -637,10 +633,9 @@ async def user_toggle_callback(query: types.CallbackQuery, state: FSMContext):
     finally:
         await safe_close(conn)
 
-# =========================================  
-#            РАЗДЕЛ "ОБЪЯВЛЕНИЯ"  
-# =========================================  
-
+# =========================================
+# РАЗДЕЛ "ОБЪЯВЛЕНИЯ"
+# =========================================
 @router.callback_query(lambda q: q.data == "admin_broadcast")
 async def broadcast_callback(query: types.CallbackQuery, state: FSMContext):
     await query.message.answer("Отправьте объявление (текст, голос, фото, видео и т.п.) для рассылки всем пользователям:")

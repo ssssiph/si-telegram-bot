@@ -42,7 +42,7 @@ async def receive_contact_message(message: Message):
         text = f"📩 <b>Новое сообщение от {sender_name}</b>\n\n{message.text}"
         
         # Создаем inline-клавиатуру с кнопкой "Ответить"
-        inline_kb = InlineKeyboardMarkup(row_width=1)
+        inline_kb = InlineKeyboardMarkup(inline_keyboard=[], row_width=1)
         inline_kb.add(InlineKeyboardButton(text="Ответить", callback_data=f"reply_{message.from_user.id}"))
         
         # Отправляем сообщение администрации с указанием inline-клавиатуры.

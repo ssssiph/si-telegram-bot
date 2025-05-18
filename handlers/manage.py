@@ -10,10 +10,6 @@ from database import get_connection
 router = Router()
 ADMIN_ID = 1016554094  # Укажите актуальный ID администратора
 
-# (Если потребуется, CHANNEL_IDS можно использовать для других разделов.)
-channels_raw = os.getenv("CHANNEL_IDS", "")
-CHANNEL_IDS = [int(ch.strip()) for ch in channels_raw.split(",") if ch.strip()]
-
 # Функция для безопасного закрытия подключения
 async def safe_close(conn):
     if conn:
@@ -24,15 +20,15 @@ async def safe_close(conn):
         except Exception as ex:
             print("safe_close error:", ex)
 
-# ======================================================================
-# FSM для ответа на обращение (рабочая версия)
-# ======================================================================
+# ============================================================================
+# FSM для ответа на обращение
+# ============================================================================
 class ContactReplyState(StatesGroup):
     waiting_for_reply = State()
 
-# ======================================================================
-# ГЛАВНАЯ АДМИН-ПАНЕЛЬ (содержит только раздел "Обращения" в данном примере)
-# ======================================================================
+# ============================================================================
+# ГЛАВНАЯ АДМИН-ПАНЕЛЬ (сейчас реализована только секция "Обращения")
+# ============================================================================
 @router.message(lambda message: message.text and message.text.strip() == "⚙️ Управление")
 async def admin_panel(message: Message, state: FSMContext):
     print("[Admin] Запуск панели для", message.from_user.id)
@@ -48,7 +44,6 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Выводим меню с единственной кнопкой "Обращения"
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")]
         ])
@@ -60,9 +55,9 @@ async def admin_panel(message: Message, state: FSMContext):
     finally:
         await safe_close(conn)
 
-# ======================================================================
-# РАЗДЕЛ "ОБРАЩЕНИЯ" – вывод списка обращений и ответы
-# ======================================================================
+# ============================================================================
+# Раздел "Обращения": вывод списка обращений и ответы
+# ============================================================================
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Обращения] Запрос списка обращений")
     conn = await get_connection()
@@ -82,6 +77,7 @@ async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
             return
         buttons = []
         for contact in contacts:
+            # Формируем строку: "Имя (@username | ID) DATE"
             cid = contact.get("id")
             full_name = contact.get("full_name") or "-"
             username = contact.get("username") or "-"
@@ -130,7 +126,8 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
     await state.update_data(contact_reply_id=cid)
     print(f"[Обращения] Выбрано обращение #{cid} для ответа")
     await query.message.answer("Введите ответ для данного обращения:")
-    await state.set_state(ContactReplyState.waiting_for_reply)  # Используем set_state через FSMContext
+    # Корректный вызов для установки состояния с помощью FSMContext
+    await state.set_state(ContactReplyState.waiting_for_reply)
     await query.answer("Ожидается ваш ответ.")
 
 @router.message(ContactReplyState.waiting_for_reply)
@@ -143,7 +140,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
         return
     conn = await get_connection()
     try:
-        # Помечем обращение как обработанное
+        # Помечаем обращение как обработанное
         async with conn.cursor() as cur:
             await cur.execute("UPDATE contacts SET answered = TRUE WHERE id = %s", (cid,))
             await conn.commit()
@@ -176,21 +173,3 @@ async def process_contact_reply(message: Message, state: FSMContext):
         await state.clear()
         await safe_close(conn)
         await send_contacts_list_to_admin(message, state)
-
-# =========================================
-# Остальные разделы – заглушки (События, Пользователи, Объявления)
-# =========================================
-@router.callback_query(lambda q: q.data == "admin_events_list")
-async def events_list_stub(query: types.CallbackQuery, state: FSMContext):
-    await query.message.answer("Секция 'События' пока не реализована.")
-    await query.answer()
-
-@router.callback_query(lambda q: q.data == "admin_users_list")
-async def users_list_stub(query: types.CallbackQuery, state: FSMContext):
-    await query.message.answer("Секция 'Пользователи' пока не реализована.")
-    await query.answer()
-
-@router.callback_query(lambda q: q.data == "admin_broadcast")
-async def broadcast_stub(query: types.CallbackQuery, state: FSMContext):
-    await query.message.answer("Секция 'Объявления' пока не реализована.")
-    await query.answer()

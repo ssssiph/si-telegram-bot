@@ -2,11 +2,11 @@ import re
 from aiogram import Router, F, types
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
-from aiomysql import DictCursor  # используем DictCursor вместо dictionary=True
+from aiomysql import DictCursor  # используем DictCursor для получения результатов в виде словаря
 from database import get_connection
 
 router = Router()
-ADMIN_ID = 1016554091  # ID администратора
+ADMIN_ID = 1016554091  # ID администратора (Генеральный директор)
 
 # ---------------------------------------------
 # Обработчик для кнопки "⚙️ Управление" из главного меню
@@ -25,7 +25,7 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Формируем inline‑клавиатуру для админпанели – одна кнопка "Связь"
+        # Формируем inline‑клавиатуру для админпанели – кнопка с надписью "Связь"
         inline_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Связь", callback_data="admin_contacts_list")]
         ])
@@ -36,7 +36,7 @@ async def admin_panel(message: Message, state: FSMContext):
         if conn:
             await conn.close()
 
-# Вспомогательная функция для извлечения списка обращений и отправки его администратору
+# Вспомогательная функция для отправки списка обращений администратору
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     conn = await get_connection()
     try:
@@ -60,11 +60,9 @@ async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
             full_name = (contact.get("full_name") or "-").strip()
             username = f"@{contact.get('username')}" if contact.get("username") and contact.get("username").strip() else "-"
             contact_id = contact.get("id")
-            # Форматируем дату из created_at; если она уже строка, можно вывести как есть
             created_at = contact.get("created_at")
-            # Для простоты выводим дату как str; при необходимости можно использовать datetime.strftime
             date_str = str(created_at) if created_at else ""
-            # Добавляем дату после скобок
+            # Добавляем дату в конец строки после закрывающей скобки
             button_text = f"{full_name} ({username} | {contact_id}) {date_str}"
             callback_data = f"contact_reply:{contact_id}"
             buttons.append([InlineKeyboardButton(text=button_text, callback_data=callback_data)])
@@ -79,11 +77,10 @@ async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
             await conn.close()
 
 # -------------------------------------------------
-# Callback для отображения списка обращений после нажатия "Связь" (из админпанели)
+# Callback для отображения списка обращений после нажатия кнопки "Связь" (в админпанели)
 # -------------------------------------------------
 @router.callback_query(lambda query: query.data == "admin_contacts_list")
 async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMContext):
-    # Сразу обновляем список обращений
     await send_contacts_list_to_admin(query.message, state)
     await query.answer()
 
@@ -137,18 +134,26 @@ async def process_contact_reply(message: Message, state: FSMContext):
             contact = await cur.fetchone()
         if not contact:
             await message.answer("Обращение не найдено.")
-            # Не очищаем состояние, чтобы список оставался видимым, можно затем обновить его
+            await state.clear()
             return
         target_user_id = contact.get("tg_id")
-        await message.bot.send_message(target_user_id, f"📨 Ответ от администрации:\n\n{message.text}")
+        # Если сообщение текстовое, отправляем send_message; если медиа – используем copy_message
+        if message.content_type == 'text':
+            await message.bot.send_message(target_user_id, f"📨 Ответ от администрации:\n\n{message.text}")
+        else:
+            await message.bot.copy_message(
+                chat_id=target_user_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id
+            )
         await message.answer("Ответ отправлен пользователю.")
         print(f"[ADMIN REPLY] Ответ на обращение {contact_id} отправлен пользователю {target_user_id}.")
-        # После ответа обновляем список обращений, чтобы ответанное обращение исчезло
+        # После отправки обновляем список обращений так, чтобы ответанное обращение исчезло
         await send_contacts_list_to_admin(message, state)
     except Exception as e:
         await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
     finally:
-        # Очищаем только ключ обработки ответа, сохраняя данные о текущей странице
+        # Очищаем только ключ обращения, сохраняя номер текущей страницы, если он есть
         current_state = await state.get_data()
         new_state = {}
         if "contacts_page" in current_state:

@@ -30,7 +30,8 @@ dp.include_routers(
 )
 
 async def ensure_director():
-    async with await get_connection() as conn:
+    conn = await get_connection()
+    try:
         tg_id = 1016554091
         exists = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", tg_id)
         if not exists:
@@ -43,6 +44,8 @@ async def ensure_director():
                 "UPDATE users SET rank = 'Генеральный директор' WHERE tg_id = $1",
                 tg_id
             )
+    finally:
+        await conn.close()
 
 async def main():
     await init_db()

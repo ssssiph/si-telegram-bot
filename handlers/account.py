@@ -8,21 +8,31 @@ router = Router()
 async def account_info(message: Message):
     conn = await get_connection()
     try:
-        user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)
-        if not user:
-            await conn.execute("""
-                INSERT INTO users (tg_id, username, full_name, rank, balance)
-                VALUES ($1, $2, $3, 'Гость', 0)
-            """, message.from_user.id, message.from_user.username or "-", message.from_user.full_name or "-")
-            user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM users WHERE tg_id = %s", (message.from_user.id,))
+            user = await cur.fetchone()
 
-        await message.answer(
-            f"<b>🧾 Ваш аккаунт:</b>\n"
-            f"ID: <code>{user['tg_id']}</code>\n"
-            f"Имя: {user['full_name']}\n"
-            f"Юзернейм: {user['username']}\n"
-            f"Ранг: {user['rank']}\n"
-            f"💎 Баланс: {user['balance']}"
-        )
+            if not user:
+                await cur.execute("""
+                    INSERT INTO users (tg_id, username, full_name, rank, balance)
+                    VALUES (%s, %s, %s, 'Гость', 0)
+                """, (
+                    message.from_user.id,
+                    message.from_user.username or "-",
+                    message.from_user.full_name or "-"
+                ))
+                await cur.execute("SELECT * FROM users WHERE tg_id = %s", (message.from_user.id,))
+                user = await cur.fetchone()
+
+            tg_id, username, full_name, rank, balance, *_ = user
+
+            await message.answer(
+                f"<b>🧾 Ваш аккаунт:</b>\n"
+                f"ID: <code>{tg_id}</code>\n"
+                f"Имя: {full_name}\n"
+                f"Юзернейм: {username}\n"
+                f"Ранг: {rank}\n"
+                f"💎 Баланс: {balance}"
+            )
     finally:
-        await conn.close()
+        conn.close()

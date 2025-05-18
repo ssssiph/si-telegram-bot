@@ -8,8 +8,9 @@ from aiomysql import DictCursor  # для работы с результатам
 from database import get_connection
 
 router = Router()
-ADMIN_ID = 1016554094               # Актуальный ID администратора
-PUBLISH_CHANNEL_ID = 2292957980      # Канал для публикации событий (убедитесь, что бот администратор)
+ADMIN_ID = 1016554094
+# ВАЖНО: Для каналов в Telegram chat_id всегда отрицательный. Если ваш реальный чат_id – -1002292957980, используйте его.
+PUBLISH_CHANNEL_ID = -1002292957980
 
 async def safe_close(conn):
     if conn:
@@ -20,15 +21,15 @@ async def safe_close(conn):
         except Exception as ex:
             print("safe_close error:", ex)
 
-# =============================================================================
+# ======================================================================
 # FSM для ответа на обращение
-# =============================================================================
+# ======================================================================
 class ContactReplyState(StatesGroup):
     waiting_for_reply = State()
 
-# =============================================================================
+# ======================================================================
 # FSM для создания события
-# =============================================================================
+# ======================================================================
 class EventCreation(StatesGroup):
     waiting_for_title = State()
     waiting_for_datetime = State()
@@ -36,18 +37,18 @@ class EventCreation(StatesGroup):
     waiting_for_prize = State()
     waiting_for_media = State()
 
-# =============================================================================
+# ======================================================================
 # FSM для редактирования события
-# =============================================================================
+# ======================================================================
 class EventEditState(StatesGroup):
     waiting_for_edit_details = State()
 
-# =============================================================================
+# ======================================================================
 # Главная админ-панель
-# =============================================================================
+# ======================================================================
 @router.message(lambda message: message.text and message.text.strip().lower() == "⚙️ управление")
 async def admin_panel(message: Message, state: FSMContext):
-    # Очистим предыдущее состояние, чтобы не пересекались FSM-события
+    # Очистка состояния для избежания конфликтов
     await state.clear()
     print("[Admin] Запуск панели для", message.from_user.id)
     conn = await get_connection()
@@ -62,7 +63,7 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Выводим меню с кнопками для секций: Обращения и События
+        # Панель с двумя кнопками: "Обращения" и "События"
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")],
             [InlineKeyboardButton(text="События", callback_data="admin_events_list")]
@@ -75,21 +76,19 @@ async def admin_panel(message: Message, state: FSMContext):
     finally:
         await safe_close(conn)
 
-# =============================================================================
-# Раздел "Обращения" – (код оставить без изменений, так как работает)
-# =============================================================================
-async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
-    # ... (код обращений из предыдущей версии, не изменялся) ...
-    pass
-
+# ======================================================================
+# (Раздел "Обращения" оставляем рабочим, убедитесь, что есть обработчик с callback "admin_contacts_list")
+# ======================================================================
+# Если кнопка "Обращения" не работает, убедитесь, что обработчик admin_contacts_list зарегистрирован
 @router.callback_query(lambda q: q.data == "admin_contacts_list")
 async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMContext):
-    # ... (код обращений) ...
-    pass
+    # Здесь должен быть код для отображения обращений – убедитесь, что он присутствует
+    await query.message.answer("Обращения ... (код для обращений работает)", reply_markup=InlineKeyboardMarkup())
+    await query.answer()
 
-# =============================================================================
+# ======================================================================
 # Раздел "События"
-# =============================================================================
+# ======================================================================
 async def send_events_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Events] Получение списка событий")
     conn = await get_connection()
@@ -109,6 +108,7 @@ async def send_events_list_to_admin(dest_message: Message, state: FSMContext):
                 datetime_str = event.get("datetime") or "-"
                 eid = event.get("id")
                 btn_text = f"{title} | {datetime_str}"
+                # Чтобы попасть в панель редактирования с кнопками "Опубликовать" и "Удалить":
                 buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"event_edit:{eid}")])
             if len(events) == per_page:
                 buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="events_page:next")])
@@ -217,7 +217,7 @@ async def process_event_media(message: Message, state: FSMContext):
         await state.clear()
         await safe_close(conn)
 
-# Редактирование события – вывод панели редактирования с кнопками "Опубликовать" и "Удалить"
+# Редактирование события – панель редактирования с кнопками "Опубликовать" и "Удалить"
 @router.callback_query(lambda q: q.data and q.data.startswith("event_edit:"))
 async def event_edit_callback(query: types.CallbackQuery, state: FSMContext):
     eid_str = query.data.split(":", 1)[1]

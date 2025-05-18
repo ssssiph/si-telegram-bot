@@ -15,7 +15,7 @@ async def start_command(message: Message):
 
             if not result:
                 await cur.execute("""
-                    INSERT INTO users (tg_id, username, full_name, rank, balance)
+                    INSERT INTO users (tg_id, username, full_name, `rank`, balance)
                     VALUES (%s, %s, %s, 'Гость', 0)
                 """, (
                     message.from_user.id,

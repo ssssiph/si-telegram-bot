@@ -1,8 +1,9 @@
+import re
 from aiogram import Router, F, types
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
+from aiomysql import DictCursor  # используем DictCursor вместо dictionary=True
 from database import get_connection
-from aiomysql import DictCursor  # Импортируем DictCursor для работы с aiomysql
 
 router = Router()
 ADMIN_ID = 1016554091  # ID администратора
@@ -24,7 +25,7 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Формируем inline-клавиатуру для админпанели – одна кнопка "Связь"
+        # Формируем inline‑клавиатуру для админпанели – одна кнопка "Связь"
         inline_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Связь", callback_data="admin_contacts_list")]
         ])
@@ -35,14 +36,10 @@ async def admin_panel(message: Message, state: FSMContext):
         if conn:
             await conn.close()
 
-# -------------------------------------------------
-# Callback для отображения списка обращений после нажатия "Связь" (из админпанели)
-# -------------------------------------------------
-@router.callback_query(lambda query: query.data == "admin_contacts_list")
-async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMContext):
+# Вспомогательная функция для извлечения списка обращений и отправки его администратору
+async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     conn = await get_connection()
     try:
-        # Получаем номер страницы (по умолчанию 1)
         data = await state.get_data()
         page = data.get("contacts_page", 1)
         contacts_per_page = 9
@@ -55,30 +52,40 @@ async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMCon
             )
             contacts = await cur.fetchall()
         if not contacts:
-            await query.message.edit_text("Нет новых обращений.")
-            await query.answer()
+            await dest_message.answer("Нет новых обращений.")
             return
 
-        # Формируем inline-клавиатуру: для каждого обращения отдельная кнопка
         buttons = []
         for contact in contacts:
             full_name = (contact.get("full_name") or "-").strip()
             username = f"@{contact.get('username')}" if contact.get("username") and contact.get("username").strip() else "-"
             contact_id = contact.get("id")
-            button_text = f"{full_name} ({username} | {contact_id})"
+            # Форматируем дату из created_at; если она уже строка, можно вывести как есть
+            created_at = contact.get("created_at")
+            # Для простоты выводим дату как str; при необходимости можно использовать datetime.strftime
+            date_str = str(created_at) if created_at else ""
+            # Добавляем дату после скобок
+            button_text = f"{full_name} ({username} | {contact_id}) {date_str}"
             callback_data = f"contact_reply:{contact_id}"
             buttons.append([InlineKeyboardButton(text=button_text, callback_data=callback_data)])
-        # Если записей ровно contacts_per_page, добавляем кнопку для перехода на следующую страницу
         if len(contacts) == contacts_per_page:
             buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="contacts_page:next")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-        await query.message.edit_text("Список обращений:", reply_markup=kb)
-        await query.answer()
+        await dest_message.answer("Список обращений:", reply_markup=kb)
     except Exception as e:
-        await query.message.answer(f"Ошибка при получении обращений: <code>{e}</code>")
+        await dest_message.answer(f"Ошибка при получении обращений: <code>{e}</code>")
     finally:
         if conn:
             await conn.close()
+
+# -------------------------------------------------
+# Callback для отображения списка обращений после нажатия "Связь" (из админпанели)
+# -------------------------------------------------
+@router.callback_query(lambda query: query.data == "admin_contacts_list")
+async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMContext):
+    # Сразу обновляем список обращений
+    await send_contacts_list_to_admin(query.message, state)
+    await query.answer()
 
 # -------------------------------------------------
 # Callback для навигации по страницам списка обращений
@@ -93,7 +100,8 @@ async def contacts_page_nav(query: types.CallbackQuery, state: FSMContext):
     else:
         page = max(1, page - 1)
     await state.update_data(contacts_page=page)
-    await admin_contacts_list_callback(query, state)
+    await send_contacts_list_to_admin(query.message, state)
+    await query.answer()
 
 # -------------------------------------------------
 # Callback при выборе конкретного обращения
@@ -116,7 +124,7 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
 @router.message(lambda m: m.from_user.id == ADMIN_ID)
 async def process_contact_reply(message: Message, state: FSMContext):
     data = await state.get_data()
-    if "contact_reply_id" not in data:
+    if "contact_reply_id" not in data or not data["contact_reply_id"]:
         return  # Если обращение не выбрано, игнорируем сообщение
     contact_id = data["contact_reply_id"]
     conn = await get_connection()
@@ -129,15 +137,22 @@ async def process_contact_reply(message: Message, state: FSMContext):
             contact = await cur.fetchone()
         if not contact:
             await message.answer("Обращение не найдено.")
-            await state.clear()
+            # Не очищаем состояние, чтобы список оставался видимым, можно затем обновить его
             return
         target_user_id = contact.get("tg_id")
         await message.bot.send_message(target_user_id, f"📨 Ответ от администрации:\n\n{message.text}")
         await message.answer("Ответ отправлен пользователю.")
         print(f"[ADMIN REPLY] Ответ на обращение {contact_id} отправлен пользователю {target_user_id}.")
+        # После ответа обновляем список обращений, чтобы ответанное обращение исчезло
+        await send_contacts_list_to_admin(message, state)
     except Exception as e:
         await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
     finally:
-        await state.clear()
+        # Очищаем только ключ обработки ответа, сохраняя данные о текущей странице
+        current_state = await state.get_data()
+        new_state = {}
+        if "contacts_page" in current_state:
+            new_state["contacts_page"] = current_state["contacts_page"]
+        await state.set_data(new_state)
         if conn:
             await conn.close()

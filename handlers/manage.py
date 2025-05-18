@@ -2,6 +2,7 @@ from aiogram import Router, F, types
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from database import get_connection
+from aiomysql import DictCursor  # Импортируем DictCursor для работы с aiomysql
 
 router = Router()
 ADMIN_ID = 1016554091  # ID администратора
@@ -31,11 +32,11 @@ async def admin_panel(message: Message, state: FSMContext):
     except Exception as e:
         await message.answer(f"Ошибка в админке:\n<code>{e}</code>")
     finally:
-        if conn is not None:
+        if conn:
             await conn.close()
 
 # -------------------------------------------------
-# Callback для отображения списка обращений после нажатия "Связь"
+# Callback для отображения списка обращений после нажатия "Связь" (из админпанели)
 # -------------------------------------------------
 @router.callback_query(lambda query: query.data == "admin_contacts_list")
 async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMContext):
@@ -47,7 +48,7 @@ async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMCon
         contacts_per_page = 9
         offset = (page - 1) * contacts_per_page
 
-        async with conn.cursor(dictionary=True) as cur:
+        async with conn.cursor(DictCursor) as cur:
             await cur.execute(
                 "SELECT * FROM contacts WHERE answered = FALSE ORDER BY created_at DESC LIMIT %s OFFSET %s",
                 (contacts_per_page, offset)
@@ -67,7 +68,7 @@ async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMCon
             button_text = f"{full_name} ({username} | {contact_id})"
             callback_data = f"contact_reply:{contact_id}"
             buttons.append([InlineKeyboardButton(text=button_text, callback_data=callback_data)])
-        # Если записей ровно contacts_per_page, добавляем кнопку навигации
+        # Если записей ровно contacts_per_page, добавляем кнопку для перехода на следующую страницу
         if len(contacts) == contacts_per_page:
             buttons.append([InlineKeyboardButton(text="Следующая страница", callback_data="contacts_page:next")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -76,7 +77,7 @@ async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMCon
     except Exception as e:
         await query.message.answer(f"Ошибка при получении обращений: <code>{e}</code>")
     finally:
-        if conn is not None:
+        if conn:
             await conn.close()
 
 # -------------------------------------------------
@@ -123,7 +124,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
         async with conn.cursor() as cur:
             await cur.execute("UPDATE contacts SET answered = TRUE WHERE id = %s", (contact_id,))
             await conn.commit()
-        async with conn.cursor(dictionary=True) as cur:
+        async with conn.cursor(DictCursor) as cur:
             await cur.execute("SELECT * FROM contacts WHERE id = %s", (contact_id,))
             contact = await cur.fetchone()
         if not contact:
@@ -138,5 +139,5 @@ async def process_contact_reply(message: Message, state: FSMContext):
         await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
     finally:
         await state.clear()
-        if conn is not None:
+        if conn:
             await conn.close()

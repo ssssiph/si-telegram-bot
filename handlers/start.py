@@ -5,7 +5,7 @@ from database import get_connection
 
 router = Router()
 
-@router.message(F.text == "/start")
+@router.message(F.text.strip() == "/start")
 async def start_command(message: Message):
     async with await get_connection() as conn:
         user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)

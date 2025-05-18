@@ -32,11 +32,12 @@ async def init_db():
                 tg_id BIGINT PRIMARY KEY,
                 username VARCHAR(255),
                 full_name VARCHAR(255),
-                rank VARCHAR(50) DEFAULT 'Гость',
+                `rank` VARCHAR(50) DEFAULT 'Гость',
                 balance INT DEFAULT 0,
                 blocked BOOLEAN DEFAULT FALSE
             )
         """)
+
         await cur.execute("""
             CREATE TABLE IF NOT EXISTS events (
                 id INT AUTO_INCREMENT PRIMARY KEY,

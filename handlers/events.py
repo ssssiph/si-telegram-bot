@@ -1,10 +1,10 @@
-from aiogram import Router, F
+from aiogram import Router
 from aiogram.types import Message
 from database import get_connection
 
 router = Router()
 
-@router.message(F.text.contains("События"))
+@router.message(lambda message: message.text is not None and message.text.strip() == "🎯 События")
 async def show_events(message: Message):
     conn = await get_connection()
     try:
@@ -19,7 +19,7 @@ async def show_events(message: Message):
                 f"🏆 Приз: {event['prize']}\n"
                 f"📅 Дата: {event['datetime']}"
             )
-            if event["media"]:
+            if event.get("media"):
                 await message.answer_photo(photo=event["media"], caption=text)
             else:
                 await message.answer(text)

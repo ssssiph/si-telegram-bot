@@ -4,7 +4,7 @@ from database import get_connection
 
 router = Router()
 
-# Задаем ID администратора
+# Задаем ID администратора (директора)
 ADMIN_ID = 1016554091
 
 # Множество для хранения ID пользователей, ожидающих отправки сообщения администрации
@@ -69,7 +69,7 @@ async def receive_contact_message(message: Message):
 
 @router.callback_query(lambda query: query.data is not None and query.data.startswith("reply_"))
 async def admin_reply_callback(query: types.CallbackQuery):
-    # Извлекаем target_user_id из callback_data, ожидается формат reply_<tg_id>
+    # Извлекаем target_user_id из callback_data, формат: reply_<tg_id>
     target_user_id_str = query.data.split("_", 1)[1]
     try:
         target_user_id = int(target_user_id_str)
@@ -81,13 +81,18 @@ async def admin_reply_callback(query: types.CallbackQuery):
     await query.answer("Введите одно сообщение для ответа пользователю", show_alert=True)
     print(f"[REPLY] Администратор {query.from_user.id} готов ответить пользователю {target_user_id}.")
 
-@router.message()
+# Обработчик текста, который отправляет ответ от администрации
+# Этот handler срабатывает только для администратора
+@router.message(lambda message: message.from_user.id == ADMIN_ID)
 async def admin_reply_handler(message: Message):
     if message.from_user.id not in reply_sessions:
         return
     target_user_id = reply_sessions.pop(message.from_user.id)
     try:
-        await message.bot.send_message(target_user_id, f"📨 Ответ от администрации:\n\n{message.text}")
+        await message.bot.send_message(
+            target_user_id,
+            f"📨 Ответ от администрации:\n\n{message.text}"
+        )
         await message.answer("Ответ отправлен пользователю.")
         print(f"[REPLY] Ответ администратора {message.from_user.id} отправлен пользователю {target_user_id}.")
     except Exception as e:

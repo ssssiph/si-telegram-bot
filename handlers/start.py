@@ -5,14 +5,12 @@ from database import get_connection
 
 router = Router()
 
-@router.message(F.text.contains("/start"))  # Гибкая проверка команды
+@router.message(F.text.strip() == "/start")
 async def start_command(message: Message):
     conn = await get_connection()
     try:
-        # Проверяем, зарегистрирован ли пользователь
         user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)
-
-        # Если пользователя нет — добавляем его
+        
         if not user:
             await conn.execute(
                 """
@@ -24,15 +22,13 @@ async def start_command(message: Message):
                 message.from_user.full_name or "-"
             )
             user = {"rank": "Гость", "balance": 0}
-
-        # Если это Генеральный директор, обновляем ранг
+        
         if message.from_user.id == 1016554091:
             await conn.execute(
                 "UPDATE users SET rank = 'Генеральный директор' WHERE tg_id = $1",
                 message.from_user.id
             )
-            user["rank"] = "Генеральный директор"
-
+        
         await message.answer(f"👋 Добро пожаловать, {message.from_user.full_name or '-'}!", reply_markup=main_menu)
     finally:
         await conn.close()

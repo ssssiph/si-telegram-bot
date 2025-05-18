@@ -8,6 +8,7 @@ router = Router()
 
 @router.message(F.text.strip() == "🛠 Управление")
 async def admin_panel(message: Message, state: FSMContext):
+    await state.clear()
     await message.answer(
         "🛠 Панель управления:\n\n1. Создать событие",
         reply_markup=back_menu

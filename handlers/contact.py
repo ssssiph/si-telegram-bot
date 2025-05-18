@@ -1,79 +1,77 @@
+import re
 from aiogram import Router, F, types
 from aiogram.types import Message
 from database import get_connection
 
 router = Router()
 
-# Задаем ID администратора (директора)
+# ID администратора (директора)
 ADMIN_ID = 1016554091
-
-# Множество для хранения ID пользователей, ожидающих отправки сообщения администрации
-waiting_for_contact = set()
-
-# Словарь для хранения соответствий:
-# key = message_id (сообщения, отправленного администрации ботом)
-# value = target_user_id (пользователь, от которого пришло сообщение)
-contact_mapping = {}
 
 @router.message(F.text == "📩 Связь")
 async def contact_intro(message: Message):
-    # Функция недоступна для администратора
+    # Администратор не может использовать эту функцию
     if message.from_user.id == ADMIN_ID:
         await message.answer("Администратор не может использовать эту функцию.")
         return
-    waiting_for_contact.add(message.from_user.id)
     await message.answer("✉️ Напиши сообщение, которое ты хочешь отправить администрации.")
-    print(f"[CONTACT] Пользователь {message.from_user.id} перешёл в режим отправки сообщения.")
+    print(f"[CONTACT] Пользователь {message.from_user.id} начал контакт.")
 
 @router.message()
 async def receive_contact_message(message: Message):
-    if message.from_user.id not in waiting_for_contact:
-        return  # Если пользователь не ожидает отправки сообщения – выходим
-    waiting_for_contact.remove(message.from_user.id)
-    
+    # Этот handler срабатывает, если сообщение НЕ является reply и не от администратора
+    if message.from_user.id == ADMIN_ID or message.reply_to_message is not None:
+        return
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            # Проверяем, зарегистрирован ли пользователь; если нет – регистрируем
+            # Проверяем, зарегистрирован ли пользователь, если нет — регистрируем
             await cur.execute("SELECT * FROM users WHERE tg_id = %s", (message.from_user.id,))
             user = await cur.fetchone()
             if not user:
-                await cur.execute("""
-                    INSERT INTO users (tg_id, username, full_name, `rank`, balance)
-                    VALUES (%s, %s, %s, 'Гость', 0)
-                """, (
-                    message.from_user.id,
-                    message.from_user.username or "-",
-                    message.from_user.full_name or "-"
-                ))
+                await cur.execute(
+                    """INSERT INTO users (tg_id, username, full_name, `rank`, balance)
+                    VALUES (%s, %s, %s, 'Гость', 0)""",
+                    (message.from_user.id,
+                     message.from_user.username or "-",
+                     message.from_user.full_name or "-")
+                )
+        # Формируем имя отправителя
         sender_name = (f"@{message.from_user.username}"
                        if message.from_user.username
                        else (message.from_user.full_name or "-"))
-        text = f"📩 <b>Новое сообщение от {sender_name}</b>\n\n{message.text}"
-        
-        # Отправляем сообщение администрации и сохраняем его ID
+        # Добавляем маркер с ID пользователя (он будет виден в виде моноширинного текста)
+        text = (f"📩 <b>Новое сообщение от {sender_name}</b>\n\n"
+                f"{message.text}\n\n"
+                f"<code>UID:{message.from_user.id}</code>")
         sent_msg = await message.bot.send_message(ADMIN_ID, text, parse_mode="HTML")
-        contact_mapping[sent_msg.message_id] = message.from_user.id
-        
         await message.answer("📨 Сообщение отправлено администрации.")
-        print(f"[CONTACT] Сообщение от {message.from_user.id} отправлено администрации (admin_msg_id={sent_msg.message_id}).")
+        print(f"[CONTACT] Сообщение от {message.from_user.id} отправлено администрации (msg id {sent_msg.message_id}).")
     except Exception as e:
-        print("[CONTACT ERROR] При отправке сообщения администрации:", e)
+        print("[CONTACT ERROR]", e)
         await message.answer("❗ Не удалось отправить сообщение администрации.")
     finally:
         conn.close()
 
-# Обработчик для ответа администратора
-# Срабатывает, если сообщение от администратора является ответом (reply) на одно из пересланных сообщений
-@router.message(lambda message: message.from_user.id == ADMIN_ID and message.reply_to_message is not None)
+@router.message(lambda m: m.from_user.id == ADMIN_ID and m.reply_to_message is not None)
 async def admin_reply_handler(message: Message):
-    replied_msg_id = message.reply_to_message.message_id  # ID сообщения, на которое ответил администратор
-    if replied_msg_id not in contact_mapping:
-        await message.answer("Не найдена сессия для ответа на это сообщение.")
+    """
+    Этот handler срабатывает, когда администратор отвечает (reply) на сообщение,
+    содержащее маркер с ID пользователя. Извлекаем ID и пересылаем ответ.
+    """
+    if not message.reply_to_message.text:
+        await message.answer("Невозможно определить получателя ответа.")
         return
-    target_user_id = contact_mapping.pop(replied_msg_id)
+
+    # Ищем маркер вида "UID:<число>" в тексте сообщения, отправленного администрации
+    match = re.search(r"UID:(\d+)", message.reply_to_message.text)
+    if not match:
+        await message.answer("Не удалось извлечь ID пользователя из сообщения.")
+        return
+
+    target_user_id = int(match.group(1))
     try:
-        # Пересылаем ответ администратора (любого типа сообщения) исходному пользователю
+        # Используем copy_message для пересылки ответа администратора, независимо от типа (текст, фото и т.д.)
         await message.bot.copy_message(
             chat_id=target_user_id,
             from_chat_id=ADMIN_ID,

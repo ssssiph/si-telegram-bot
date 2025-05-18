@@ -7,7 +7,7 @@ router = Router()
 # Множество для хранения ID пользователей, ожидающих отправки сообщения администрации
 waiting_for_contact = set()
 
-# Словарь для хранения сессий ответа: key=admin_id, value=target_user_id
+# Словарь для хранения сессий ответа: key = admin_id, value = target_user_id
 reply_sessions = {}
 
 @router.message(F.text == "📩 Связь")
@@ -19,8 +19,7 @@ async def contact_intro(message: Message):
 @router.message()
 async def receive_contact_message(message: Message):
     if message.from_user.id not in waiting_for_contact:
-        # Если пользователь не в ожидании, данный handler ничего не делает
-        return
+        return  # Если пользователь не ожидает отправки сообщения, выходим
 
     waiting_for_contact.remove(message.from_user.id)
     conn = await get_connection()
@@ -38,17 +37,17 @@ async def receive_contact_message(message: Message):
                     message.from_user.username or "-",
                     message.from_user.full_name or "-"
                 ))
-        sender_name = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name or "-"
+        sender_name = f"@{message.from_user.username}" if message.from_user.username else (message.from_user.full_name or "-")
         text = f"📩 <b>Новое сообщение от {sender_name}</b>\n\n{message.text}"
         
-        # Создаем inline-клавиатуру с кнопкой "Ответить" без использования метода add()
+        # Создаем inline-клавиатуру с кнопкой "Ответить" через явное указание inline_keyboard
         inline_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="Ответить", callback_data=f"reply_{message.from_user.id}")]
             ]
         )
         
-        # Отправляем сообщение администрации с указанной inline-клавиатурой.
+        # Отправляем сообщение администрации с inline-клавиатурой.
         try:
             await message.bot.send_message(1016554091, text, reply_markup=inline_kb, parse_mode="HTML")
             await message.answer("📨 Сообщение отправлено администрации.")
@@ -60,9 +59,10 @@ async def receive_contact_message(message: Message):
     finally:
         conn.close()
 
-# Обработчик callback-запроса (нажатие кнопки "Ответить")
+# Обработчик callback-запроса для кнопки "Ответить"
 @router.callback_query(lambda query: query.data is not None and query.data.startswith("reply_"))
 async def admin_reply_callback(query: types.CallbackQuery):
+    # Извлекаем target_user_id из callback_data (формат: reply_<tg_id>)
     target_user_id_str = query.data.split("_", 1)[1]
     try:
         target_user_id = int(target_user_id_str)
@@ -79,6 +79,7 @@ async def admin_reply_callback(query: types.CallbackQuery):
 async def admin_reply_handler(message: Message):
     if message.from_user.id not in reply_sessions:
         return
+
     target_user_id = reply_sessions.pop(message.from_user.id)
     try:
         await message.bot.send_message(target_user_id, f"📨 Ответ от администрации:\n\n{message.text}")

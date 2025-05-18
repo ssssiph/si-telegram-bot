@@ -1,15 +1,14 @@
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.types import Message
 from database import get_connection
 
 router = Router()
 
-@router.message(lambda message: message.text and message.text.strip() == "👤 Аккаунт")
+@router.message(F.text == "👤 Аккаунт")
 async def account_info(message: Message):
     conn = await get_connection()
     try:
         user = await conn.fetchrow("SELECT * FROM users WHERE tg_id = $1", message.from_user.id)
-
         if not user:
             await conn.execute("""
                 INSERT INTO users (tg_id, username, full_name, rank, balance)

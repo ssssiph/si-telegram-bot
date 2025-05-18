@@ -11,13 +11,13 @@ ADMIN_ID = 1016554091
 waiting_for_contact = set()
 
 # Словарь для хранения соответствий:
-# key = message_id (сообщение, отправленное администрации ботом)
+# key = message_id (сообщения, отправленного администрации ботом)
 # value = target_user_id (пользователь, от которого пришло сообщение)
 contact_mapping = {}
 
 @router.message(F.text == "📩 Связь")
 async def contact_intro(message: Message):
-    # Администратору эта функция недоступна
+    # Функция недоступна для администратора
     if message.from_user.id == ADMIN_ID:
         await message.answer("Администратор не может использовать эту функцию.")
         return
@@ -28,13 +28,13 @@ async def contact_intro(message: Message):
 @router.message()
 async def receive_contact_message(message: Message):
     if message.from_user.id not in waiting_for_contact:
-        return  # Выходим, если пользователь не ожидает отправки сообщения
+        return  # Если пользователь не ожидает отправки сообщения – выходим
     waiting_for_contact.remove(message.from_user.id)
     
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            # Проверяем, зарегистрирован ли пользователь; если нет — регистрируем его
+            # Проверяем, зарегистрирован ли пользователь; если нет – регистрируем
             await cur.execute("SELECT * FROM users WHERE tg_id = %s", (message.from_user.id,))
             user = await cur.fetchone()
             if not user:
@@ -51,10 +51,10 @@ async def receive_contact_message(message: Message):
                        else (message.from_user.full_name or "-"))
         text = f"📩 <b>Новое сообщение от {sender_name}</b>\n\n{message.text}"
         
-        # Отправляем сообщение администрации без inline-кнопки
+        # Отправляем сообщение администрации и сохраняем его ID
         sent_msg = await message.bot.send_message(ADMIN_ID, text, parse_mode="HTML")
-        # Сохраняем соответствие: id сообщения у администрации -> id пользователя-отправителя
         contact_mapping[sent_msg.message_id] = message.from_user.id
+        
         await message.answer("📨 Сообщение отправлено администрации.")
         print(f"[CONTACT] Сообщение от {message.from_user.id} отправлено администрации (admin_msg_id={sent_msg.message_id}).")
     except Exception as e:
@@ -63,17 +63,17 @@ async def receive_contact_message(message: Message):
     finally:
         conn.close()
 
-# Обработчик для ответа администратора.
-# Если администратор отвечает (через reply) на сообщение, которое бот отправил ему, то пересылается ответ оригинальному пользователю.
+# Обработчик для ответа администратора
+# Срабатывает, если сообщение от администратора является ответом (reply) на одно из пересланных сообщений
 @router.message(lambda message: message.from_user.id == ADMIN_ID and message.reply_to_message is not None)
 async def admin_reply_handler(message: Message):
-    replied_msg_id = message.reply_to_message.message_id
+    replied_msg_id = message.reply_to_message.message_id  # ID сообщения, на которое ответил администратор
     if replied_msg_id not in contact_mapping:
-        # Если сообщение не найдено в маппинге, просто игнорируем
+        await message.answer("Не найдена сессия для ответа на это сообщение.")
         return
     target_user_id = contact_mapping.pop(replied_msg_id)
     try:
-        # Используем copy_message, чтобы переслать ответ администратора (любой тип сообщения)
+        # Пересылаем ответ администратора (любого типа сообщения) исходному пользователю
         await message.bot.copy_message(
             chat_id=target_user_id,
             from_chat_id=ADMIN_ID,

@@ -41,12 +41,14 @@ async def receive_contact_message(message: Message):
         sender_name = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name or "-"
         text = f"📩 <b>Новое сообщение от {sender_name}</b>\n\n{message.text}"
         
-        # Создаем inline-клавиатуру с кнопкой "Ответить"
-        inline_kb = InlineKeyboardMarkup(inline_keyboard=[], row_width=1)
-        inline_kb.add(InlineKeyboardButton(text="Ответить", callback_data=f"reply_{message.from_user.id}"))
+        # Создаем inline-клавиатуру с кнопкой "Ответить" без использования метода add()
+        inline_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Ответить", callback_data=f"reply_{message.from_user.id}")]
+            ]
+        )
         
-        # Отправляем сообщение администрации с указанием inline-клавиатуры.
-        # Указываем parse_mode="HTML", чтобы корректно отобразился HTML в тексте.
+        # Отправляем сообщение администрации с указанной inline-клавиатурой.
         try:
             await message.bot.send_message(1016554091, text, reply_markup=inline_kb, parse_mode="HTML")
             await message.answer("📨 Сообщение отправлено администрации.")
@@ -61,7 +63,6 @@ async def receive_contact_message(message: Message):
 # Обработчик callback-запроса (нажатие кнопки "Ответить")
 @router.callback_query(lambda query: query.data is not None and query.data.startswith("reply_"))
 async def admin_reply_callback(query: types.CallbackQuery):
-    # Извлекаем target_user_id из callback_data (формат: reply_<tg_id>)
     target_user_id_str = query.data.split("_", 1)[1]
     try:
         target_user_id = int(target_user_id_str)
@@ -69,7 +70,6 @@ async def admin_reply_callback(query: types.CallbackQuery):
         await query.answer("Ошибка: неверные данные", show_alert=True)
         return
 
-    # Регистрируем сессию ответа: администратор (query.from_user.id) отвечает target_user_id
     reply_sessions[query.from_user.id] = target_user_id
     await query.answer("Введите одно сообщение для ответа пользователю", show_alert=True)
     print(f"[REPLY] Администратор {query.from_user.id} готов ответить пользователю {target_user_id}.")

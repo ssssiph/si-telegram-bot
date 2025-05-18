@@ -1,35 +1,51 @@
-import asyncpg
+import aiomysql
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+def parse_mysql_url(url: str):
+    url = url.replace("mysql://", "")
+    user_pass, host_db = url.split("@")
+    user, password = user_pass.split(":")
+    host_port, db_name = host_db.split("/")
+    host, port = host_port.split(":")
+    return {
+        "user": user,
+        "password": password,
+        "host": host,
+        "port": int(port),
+        "db": db_name,
+    }
+
+DB_CONFIG = parse_mysql_url(DATABASE_URL)
+
 async def get_connection():
-    return await asyncpg.connect(DATABASE_URL)
+    return await aiomysql.connect(**DB_CONFIG, autocommit=True)
 
 async def init_db():
     conn = await get_connection()
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            tg_id BIGINT PRIMARY KEY,
-            username TEXT,
-            full_name TEXT,
-            rank TEXT DEFAULT 'Гость',
-            balance INTEGER DEFAULT 0,
-            blocked BOOLEAN DEFAULT FALSE
-        );
-    """)
-    # Если есть таблица events — создаём её:
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS events (
-            id SERIAL PRIMARY KEY,
-            title TEXT,
-            description TEXT,
-            prize TEXT,
-            datetime TEXT,
-            media TEXT,
-            creator_id BIGINT
-        );
-    """)
-    await conn.close()
+    async with conn.cursor() as cur:
+        await cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                tg_id BIGINT PRIMARY KEY,
+                username VARCHAR(255),
+                full_name VARCHAR(255),
+                rank VARCHAR(50) DEFAULT 'Гость',
+                balance INT DEFAULT 0,
+                blocked BOOLEAN DEFAULT FALSE
+            )
+        """)
+        await cur.execute("""
+            CREATE TABLE IF NOT EXISTS events (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                title TEXT,
+                description TEXT,
+                prize TEXT,
+                datetime TEXT,
+                media TEXT,
+                creator_id BIGINT
+            )
+        """)
+    conn.close()

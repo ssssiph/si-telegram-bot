@@ -3,13 +3,13 @@ import json
 from aiogram import Router, types, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State    # для aiogram v3.x
-from aiomysql import DictCursor                    # для работы с запросами в виде словаря
+from aiogram.fsm.state import StatesGroup, State  # для aiogram v3.x
+from aiomysql import DictCursor              # для работы с запросами в виде словаря
 from database import get_connection
 
 router = Router()
 ADMIN_ID = 1016554094
-# Если у вас закрытый канал, его chat_id должен быть отрицательным.
+# Убедитесь, что chat_id канала указан корректно (для каналов chat_id обычно – отрицательное число)
 PUBLISH_CHANNEL_ID = -1002292957980
 
 async def safe_close(conn):
@@ -44,10 +44,13 @@ class EventEditState(StatesGroup):
     waiting_for_edit_details = State()
 
 # =============================================================================
-# Обработка входящих сообщени­й от пользователей (обращения)
+# Обработка входящих сообщений от пользователей (обращения)
 # =============================================================================
 @router.message(lambda m: m.chat.type == "private" and m.from_user.id != ADMIN_ID)
-async def handle_incoming_contact(m: Message):
+async def handle_incoming_contact(m: Message, state: FSMContext):
+    # Если есть активное состояние (например, админ в диалоге создания/редактирования), не обрабатываем как обращение
+    if await state.get_state() is not None:
+        return
     conn = await get_connection()
     try:
         sender_info = f"{m.from_user.full_name} (@{m.from_user.username})" if m.from_user.username else m.from_user.full_name
@@ -73,8 +76,7 @@ async def handle_incoming_contact(m: Message):
 # =============================================================================
 @router.message(lambda message: message.text and message.text.strip().lower() == "⚙️ управление")
 async def admin_panel(message: Message, state: FSMContext):
-    # Сброс предыдущих состояний
-    await state.clear()
+    await state.clear()  # сбрасываем предыдущее состояние
     print("[Admin] Запуск панели для", message.from_user.id)
     conn = await get_connection()
     try:
@@ -195,7 +197,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
             await state.clear()
             return
         original_text = contact.get("message") or "Нет текста обращения."
-        author_info = f"{contact.get('full_name','-')}" + (f" (@{contact.get('username','-')})" if contact.get("username") else "")
+        author_info = f"{contact.get('full_name', '-')}" + (f" (@{contact.get('username', '-')})" if contact.get("username") else "")
         header = f"Ваше обращение от {author_info}:\n\n{original_text}\n\nОтвет от администрации:"
         if message.content_type == "text":
             await message.bot.send_message(target_id, header + "\n\n" + message.text)
@@ -322,7 +324,6 @@ async def process_event_media(message: Message, state: FSMContext):
             )
             await conn.commit()
             event_id = cur.lastrowid
-        # Выводим панель редактирования с кнопками "Опубликовать", "Удалить" и "Редактировать событие"
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Опубликовать", callback_data=f"event_publish:{event_id}"),
              InlineKeyboardButton(text="Удалить", callback_data=f"event_delete:{event_id}")],
@@ -338,7 +339,7 @@ async def process_event_media(message: Message, state: FSMContext):
         await state.clear()
         await safe_close(conn)
 
-# Редактирование события – вывод панели с кнопками "Опубликовать" и "Удалить"
+# Редактирование события – вывод панели редактирования с кнопками "Опубликовать" и "Удалить"
 @router.callback_query(lambda q: q.data and q.data.startswith("event_edit:"))
 async def event_edit_callback(query: types.CallbackQuery, state: FSMContext):
     eid_str = query.data.split(":", 1)[1]
@@ -435,29 +436,33 @@ async def event_publish_callback(query: types.CallbackQuery, state: FSMContext):
             f"<b>Приз:</b> {event.get('prize')}"
         )
         if event.get("media"):
-            publish_text += f"\n(Медиа: {event.get('media')})"
-        published = {}
-        try:
-            # Если в событии есть медиа, можно использовать send_photo
-            sent = await query.bot.send_photo(PUBLISH_CHANNEL_ID,
-                                              photo=event.get("media"),
-                                              caption=publish_text,
-                                              parse_mode="HTML")
-            published[str(PUBLISH_CHANNEL_ID)] = sent.message_id
-            print(f"[Events] Публикация прошла успешно в канал {PUBLISH_CHANNEL_ID} как фото")
-        except Exception as pub_e:
-            # Если не получилось отправить как фото – пробуем отправить как текст
-            print(f"[Events] Ошибка публикации фото в канале {PUBLISH_CHANNEL_ID}: {pub_e}")
             try:
-                sent = await query.bot.send_message(PUBLISH_CHANNEL_ID,
-                                                    publish_text,
-                                                    parse_mode="HTML")
-                published[str(PUBLISH_CHANNEL_ID)] = sent.message_id
-                print(f"[Events] Публикация прошла успешно в канал {PUBLISH_CHANNEL_ID} как текст")
-            except Exception as pub_e2:
-                print(f"[Events] Ошибка публикации текста в канале {PUBLISH_CHANNEL_ID}: {pub_e2}")
-                await query.message.answer(f"Ошибка публикации в канале: <code>{pub_e2}</code>")
-                return
+                sent = await query.bot.send_photo(
+                    PUBLISH_CHANNEL_ID,
+                    photo=event.get("media"),
+                    caption=publish_text,
+                    parse_mode="HTML"
+                )
+                published = {str(PUBLISH_CHANNEL_ID): sent.message_id}
+                print(f"[Events] Публикация прошла успешно в канал {PUBLISH_CHANNEL_ID} как фото")
+            except Exception as pub_e:
+                print(f"[Events] Ошибка публикации фото в канале {PUBLISH_CHANNEL_ID}: {pub_e}")
+                try:
+                    sent = await query.bot.send_message(
+                        PUBLISH_CHANNEL_ID,
+                        publish_text,
+                        parse_mode="HTML"
+                    )
+                    published = {str(PUBLISH_CHANNEL_ID): sent.message_id}
+                    print(f"[Events] Публикация прошла успешно в канал {PUBLISH_CHANNEL_ID} как текст")
+                except Exception as pub_e2:
+                    print(f"[Events] Ошибка публикации текста в канале {PUBLISH_CHANNEL_ID}: {pub_e2}")
+                    await query.message.answer(f"Ошибка публикации в канале: <code>{pub_e2}</code>")
+                    return
+        else:
+            sent = await query.bot.send_message(PUBLISH_CHANNEL_ID, publish_text, parse_mode="HTML")
+            published = {str(PUBLISH_CHANNEL_ID): sent.message_id}
+            print(f"[Events] Публикация прошла успешно в канал {PUBLISH_CHANNEL_ID} как текст")
         async with conn.cursor() as cur:
             await cur.execute("UPDATE events SET published = %s WHERE id = %s", (json.dumps(published), eid))
             await conn.commit()

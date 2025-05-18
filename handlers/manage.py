@@ -8,9 +8,9 @@ from aiomysql import DictCursor  # для получения результат�
 from database import get_connection
 
 router = Router()
-ADMIN_ID = 1016554094 # Замените на актуальный ID администратора (например, Генеральный директор)
+ADMIN_ID = 1016554094  # Укажите актуальный ID администратора
 
-# Получаем список каналов (если понадобится в будущем)
+# (Если потребуется, CHANNEL_IDS можно использовать для других разделов.)
 channels_raw = os.getenv("CHANNEL_IDS", "")
 CHANNEL_IDS = [int(ch.strip()) for ch in channels_raw.split(",") if ch.strip()]
 
@@ -23,36 +23,16 @@ async def safe_close(conn):
                 await ret
         except Exception as ex:
             print("safe_close error:", ex)
-            pass
 
-# ==============================================================================
-# FSM для ответа на обращение – рабочая версия
-# ==============================================================================
+# ======================================================================
+# FSM для ответа на обращение (рабочая версия)
+# ======================================================================
 class ContactReplyState(StatesGroup):
     waiting_for_reply = State()
 
-# ==============================================================================
-# Заглушки для остальных разделов (События, Пользователи, Объявления)
-# ==============================================================================
-# Эти обработчики сделаны заглушками – их доработка будет происходить по отдельности.
-@router.callback_query(lambda q: q.data == "admin_events_list")
-async def events_list_stub(query: types.CallbackQuery, state: FSMContext):
-    await query.message.answer("Секция 'События' пока не реализована.")
-    await query.answer()
-
-@router.callback_query(lambda q: q.data == "admin_users_list")
-async def users_list_stub(query: types.CallbackQuery, state: FSMContext):
-    await query.message.answer("Секция 'Пользователи' пока не реализована.")
-    await query.answer()
-
-@router.callback_query(lambda q: q.data == "admin_broadcast")
-async def broadcast_stub(query: types.CallbackQuery, state: FSMContext):
-    await query.message.answer("Секция 'Объявления' пока не реализована.")
-    await query.answer()
-
-# ==============================================================================
-# ГЛАВНАЯ АДМИН-ПАНЕЛЬ
-# ==============================================================================
+# ======================================================================
+# ГЛАВНАЯ АДМИН-ПАНЕЛЬ (содержит только раздел "Обращения" в данном примере)
+# ======================================================================
 @router.message(lambda message: message.text and message.text.strip() == "⚙️ Управление")
 async def admin_panel(message: Message, state: FSMContext):
     print("[Admin] Запуск панели для", message.from_user.id)
@@ -62,18 +42,15 @@ async def admin_panel(message: Message, state: FSMContext):
             await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (message.from_user.id,))
             result = await cur.fetchone()
             if not result:
-                await message.answer("❗ Пользователь не найден. Отправьте /start для регистрации.")
+                await message.answer("❗ Пользователь не найден. Используйте /start для регистрации.")
                 return
             user_rank = result[0]
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        # Формируем меню с четырьмя разделами
+        # Выводим меню с единственной кнопкой "Обращения"
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")],
-            [InlineKeyboardButton(text="События", callback_data="admin_events_list")],
-            [InlineKeyboardButton(text="Пользователи", callback_data="admin_users_list")],
-            [InlineKeyboardButton(text="Объявления", callback_data="admin_broadcast")]
+            [InlineKeyboardButton(text="Обращения", callback_data="admin_contacts_list")]
         ])
         await message.answer("Панель управления. Выберите раздел:", reply_markup=kb)
         print("[Admin] Меню выведено")
@@ -83,9 +60,9 @@ async def admin_panel(message: Message, state: FSMContext):
     finally:
         await safe_close(conn)
 
-# ==============================================================================
-# РАЗДЕЛ "ОБРАЩЕНИЯ" – рабочая версия ответов
-# ==============================================================================
+# ======================================================================
+# РАЗДЕЛ "ОБРАЩЕНИЯ" – вывод списка обращений и ответы
+# ======================================================================
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Обращения] Запрос списка обращений")
     conn = await get_connection()
@@ -153,7 +130,7 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
     await state.update_data(contact_reply_id=cid)
     print(f"[Обращения] Выбрано обращение #{cid} для ответа")
     await query.message.answer("Введите ответ для данного обращения:")
-    await ContactReplyState.waiting_for_reply.set()
+    await state.set_state(ContactReplyState.waiting_for_reply)  # Используем set_state через FSMContext
     await query.answer("Ожидается ваш ответ.")
 
 @router.message(ContactReplyState.waiting_for_reply)
@@ -166,7 +143,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
         return
     conn = await get_connection()
     try:
-        # Помечаем обращение как обработанное
+        # Помечем обращение как обработанное
         async with conn.cursor() as cur:
             await cur.execute("UPDATE contacts SET answered = TRUE WHERE id = %s", (cid,))
             await conn.commit()

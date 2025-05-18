@@ -14,7 +14,7 @@ async def account_info(message: Message):
 
             if not user:
                 await cur.execute("""
-                    INSERT INTO users (tg_id, username, full_name, rank, balance)
+                    INSERT INTO users (tg_id, username, full_name, `rank`, balance)
                     VALUES (%s, %s, %s, 'Гость', 0)
                 """, (
                     message.from_user.id,

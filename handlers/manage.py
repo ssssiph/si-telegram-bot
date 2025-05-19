@@ -5,14 +5,14 @@ from aiogram.types import (
     Message, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 )
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State    # для aiogram v3.x
-from aiomysql import DictCursor                    # для работы с запросами в виде словаря
+from aiogram.fsm.state import StatesGroup, State  # для aiogram v3.x
+from aiomysql import DictCursor  # для работы с запросами в виде словаря
 from database import get_connection
 
 router = Router()
-# Задайте действительный ID администратора
+
+# Настройки: актуальный ID администратора и корректный chat_id канала
 ADMIN_ID = 1016554091  
-# Для каналов chat_id обычно отрицательный.
 PUBLISH_CHANNEL_ID = -1002292957980
 
 async def safe_close(conn):
@@ -69,38 +69,33 @@ class UserEditState(StatesGroup):
     waiting_for_new_rank = State()
 
 # =============================================================================
-# FSM для операций с алмазиками
+# FSM для операций с "алмазами" (используем поле balance)
 # =============================================================================
 class DiamondsState(StatesGroup):
     waiting_for_amount = State()
 
 # =============================================================================
-# Обработка входящих сообщений от пользователей (обращения)
+# Обработка входящих обращений от пользователей (не администратора)
+# Если пользователь не найден, ранг равен "Гость", или он заблокирован – возвращаем "🚫 Отказано в доступе."
 # =============================================================================
 @router.message(lambda m: m.chat.type == "private" and m.from_user.id != ADMIN_ID)
 async def handle_incoming_contact(m: Message, state: FSMContext):
-    # Если уже активен FSM, пропускаем обработку
     if await state.get_state() is not None:
         return
-    # Если пользователь заблокирован, отклоняем его запрос
     if await is_user_blocked(m.from_user.id):
         await m.answer("🚫 Отказано в доступе.")
         return
     conn = await get_connection()
     try:
-        # Проверяем, есть ли пользователь в базе и его ранг. Если отсутствует или ранг равен "Гость", отказываем.
         async with conn.cursor() as cur:
+            # Оборачиваем rank в обратные кавычки
             await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (m.from_user.id,))
             result = await cur.fetchone()
         if result is None or result[0] == "Гость":
             await m.answer("🚫 Отказано в доступе.")
             return
-
         sender_info = f"{m.from_user.full_name} (@{m.from_user.username})" if m.from_user.username else m.from_user.full_name
-        if m.content_type == "text":
-            content = m.text
-        else:
-            content = f"[Медиа: {m.content_type}]\nОтправитель: {sender_info}"
+        content = m.text if m.content_type == "text" else f"[Медиа: {m.content_type}]\nОтправитель: {sender_info}"
         async with conn.cursor() as cur:
             await cur.execute(
                 "INSERT INTO contacts (tg_id, full_name, username, message, answered) VALUES (%s, %s, %s, %s, %s)",
@@ -124,7 +119,6 @@ async def admin_panel(message: Message, state: FSMContext):
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            # Используем `rank` с обратными кавычками (так как rank – зарезервированное слово)
             await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (message.from_user.id,))
             result = await cur.fetchone()
             if not result:
@@ -159,7 +153,10 @@ async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
         per_page = 9
         offset = (page - 1) * per_page
         async with conn.cursor(DictCursor) as cur:
-            await cur.execute("SELECT * FROM contacts WHERE answered = FALSE ORDER BY created_at DESC LIMIT %s OFFSET %s", (per_page, offset))
+            await cur.execute(
+                "SELECT * FROM contacts WHERE answered = FALSE ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                (per_page, offset)
+            )
             contacts = await cur.fetchall()
         if not contacts:
             await dest_message.answer("Нет новых обращений.")
@@ -199,7 +196,7 @@ async def contacts_page_nav(query: types.CallbackQuery, state: FSMContext):
     await send_contacts_list_to_admin(query.message, state)
     await query.answer()
 
-# При нажатии на кнопку ответа выводим исходное обращение
+# При выборе обращения выводим исходное сообщение для ответа
 @router.callback_query(lambda q: q.data and q.data.startswith("contact_reply:"))
 async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
     cid_str = query.data.split(":", 1)[1]
@@ -259,11 +256,7 @@ async def process_contact_reply(message: Message, state: FSMContext):
             await message.bot.send_message(target_id, header + "\n\n" + message.text)
         else:
             await message.bot.send_message(target_id, header + "\n\nОтвет ниже:")
-            await message.bot.copy_message(
-                chat_id=target_id,
-                from_chat_id=message.chat.id,
-                message_id=message.message_id
-            )
+            await message.bot.copy_message(chat_id=target_id, from_chat_id=message.chat.id, message_id=message.message_id)
         await message.answer("Ответ отправлен пользователю.")
     except Exception as e:
         await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
@@ -628,8 +621,8 @@ async def user_manage_callback(query: types.CallbackQuery, state: FSMContext):
             await query.message.answer("Пользователь не найден.")
             return
         buttons = [
-            [InlineKeyboardButton(text="💎 Выдать алмазики", callback_data=f"user_give:{tg_id}"),
-             InlineKeyboardButton(text="💎 Забрать алмазики", callback_data=f"user_take:{tg_id}")],
+            [InlineKeyboardButton(text="💎 Выдать алмазы", callback_data=f"user_give:{tg_id}"),
+             InlineKeyboardButton(text="💎 Забрать алмазы", callback_data=f"user_take:{tg_id}")],
             [InlineKeyboardButton(text="🔄 Сменить ранг", callback_data=f"user_change_rank:{tg_id}")]
         ]
         if user.get("blocked"):
@@ -642,7 +635,7 @@ async def user_manage_callback(query: types.CallbackQuery, state: FSMContext):
             f"ID: {user.get('internal_id', 'N/A')}\n"
             f"Пользователь: {user.get('full_name')} (@{user.get('username')})\n"
             f"Ранг: {user.get('rank')}\n"
-            f"Алмазики: {user.get('diamonds', 0)}\n"
+            f"Алмазы: {user.get('balance', 0)}\n"
             f"Статус: {'Заблокирован' if user.get('blocked') else 'Активен'}"
         )
         await query.message.answer(details, reply_markup=kb)
@@ -653,7 +646,7 @@ async def user_manage_callback(query: types.CallbackQuery, state: FSMContext):
     finally:
         await safe_close(conn)
 
-# Выдача/забор алмазиков
+# Выдача/забор алмазов (используем поле balance)
 @router.callback_query(lambda q: q.data and (q.data.startswith("user_give:") or q.data.startswith("user_take:")))
 async def user_diamonds_callback(query: types.CallbackQuery, state: FSMContext):
     action = "give" if query.data.startswith("user_give:") else "take"
@@ -686,16 +679,16 @@ async def process_diamond_amount(message: Message, state: FSMContext):
     conn = await get_connection()
     try:
         if action == "give":
-            query_str = "UPDATE users SET diamonds = diamonds + %s WHERE tg_id = %s"
+            query_str = "UPDATE users SET balance = balance + %s WHERE tg_id = %s"
         else:
-            query_str = "UPDATE users SET diamonds = GREATEST(diamonds - %s, 0) WHERE tg_id = %s"
+            query_str = "UPDATE users SET balance = GREATEST(balance - %s, 0) WHERE tg_id = %s"
         async with conn.cursor() as cur:
             await cur.execute(query_str, (amount, tg_id))
             await conn.commit()
         await message.answer("Операция выполнена успешно!")
     except Exception as e:
-        await message.answer(f"Ошибка при обновлении алмазиков: {e}")
-        print("[Users ERROR при обновлении алмазиков]", e)
+        await message.answer(f"Ошибка при обновлении алмазов: {e}")
+        print("[Users ERROR при обновлении алмазов]", e)
     finally:
         await state.clear()
         await safe_close(conn)
@@ -743,8 +736,9 @@ async def process_user_edit(message: Message, state: FSMContext):
         return
     conn = await get_connection()
     try:
+        # Обернем поле rank в обратные кавычки
         async with conn.cursor() as cur:
-            await cur.execute("UPDATE users SET rank = %s WHERE tg_id = %s", (new_rank, tg_id))
+            await cur.execute("UPDATE users SET `rank` = %s WHERE tg_id = %s", (new_rank, tg_id))
             await conn.commit()
         await message.answer("Ранг пользователя обновлён.")
         print(f"[Users] Ранг пользователя {tg_id} обновлён на: {new_rank}")

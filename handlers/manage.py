@@ -45,6 +45,7 @@ class UserEditState(StatesGroup):
 class DiamondsState(StatesGroup):
     waiting_for_amount = State()
 
+# Это состояние используется только в панели управления для создания промокодов.
 class PromoCreateState(StatesGroup):
     waiting_for_code_and_reward = State()
 
@@ -76,6 +77,7 @@ async def handle_incoming_contact(m: Message, state: FSMContext):
         async with conn.cursor() as cur:
             await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (m.from_user.id,))
             result = await cur.fetchone()
+        # Для входящих обращений допускаются только пользователи, у которых ранг не равен "Гость".
         if result is None or result[0] == "Гость":
             await m.answer("🚫 Отказано в доступе.")
             return
@@ -109,6 +111,7 @@ async def admin_panel(message: Message, state: FSMContext):
                 await message.answer("❗ Пользователь не найден. Используйте /start для регистрации.")
                 return
             user_rank = result[0]
+        # Только Генеральному директору допускается доступ к панели управления.
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
@@ -128,7 +131,7 @@ async def admin_panel(message: Message, state: FSMContext):
         await safe_close(conn)
 
 # --------------------------------------------------
-# Обработчики создания промокодов
+# Обработчики создания промокодов (доступны только из админ-панели)
 @router.callback_query(lambda q: q.data == "create_promo")
 async def create_promo_callback(query: types.CallbackQuery, state: FSMContext):
     await query.message.answer(
@@ -372,8 +375,7 @@ async def process_event_media(message: Message, state: FSMContext):
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            await cur.execute(
-                "INSERT INTO events (title, description, prize, datetime, media, creator_id, published) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            await cur.execute("INSERT INTO events (title, description, prize, datetime, media, creator_id, published) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (title, description, prize, datetime_str, media, message.from_user.id, "{}")
             )
             await conn.commit()
@@ -409,14 +411,7 @@ async def event_edit_callback(query: types.CallbackQuery, state: FSMContext):
         if not event:
             await query.message.answer("Событие не найдено.")
             return
-        current_details = (
-            f"Текущее название: {event.get('title')}\n"
-            f"Дата и время: {event.get('datetime')}\n"
-            f"Описание: {event.get('description')}\n"
-            f"Приз: {event.get('prize')}\n"
-            f"Медиа: {event.get('media') or 'нет'}\n\n"
-            "Введите новые данные в формате:\nНазвание | Дата и время | Описание | Приз | Медиа (или 'skip')"
-        )
+        current_details = f"Текущее название: {event.get('title')}\nДата и время: {event.get('datetime')}\nОписание: {event.get('description')}\nПриз: {event.get('prize')}\nМедиа: {event.get('media') or 'нет'}\n\nВведите новые данные в формате:\nНазвание | Дата и время | Описание | Приз | Медиа (или 'skip')"
         await query.message.answer(current_details)
         await state.update_data(edit_event_id=eid)
         await state.set_state(EventEditState.waiting_for_edit_details)
@@ -445,8 +440,7 @@ async def process_event_edit(message: Message, state: FSMContext):
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            await cur.execute(
-                "UPDATE events SET title=%s, datetime=%s, description=%s, prize=%s, media=%s WHERE id = %s",
+            await cur.execute("UPDATE events SET title=%s, datetime=%s, description=%s, prize=%s, media=%s WHERE id = %s",
                 (title, datetime_str, description, prize, media, eid)
             )
             await conn.commit()
@@ -479,13 +473,7 @@ async def event_publish_callback(query: types.CallbackQuery, state: FSMContext):
         if not event:
             await query.message.answer("Событие не найдено.")
             return
-        publish_text = (
-            f"📢 <b>Событие!</b>\n\n"
-            f"<b>Название:</b> {event.get('title')}\n"
-            f"<b>Дата и время:</b> {event.get('datetime')}\n"
-            f"<b>Описание:</b> {event.get('description')}\n"
-            f"<b>Приз:</b> {event.get('prize')}"
-        )
+        publish_text = f"📢 <b>Событие!</b>\n\n<b>Название:</b> {event.get('title')}\n<b>Дата и время:</b> {event.get('datetime')}\n<b>Описание:</b> {event.get('description')}\n<b>Приз:</b> {event.get('prize')}"
         if event.get("media"):
             try:
                 sent = await query.bot.send_photo(PUBLISH_CHANNEL_ID, photo=event.get("media"), caption=publish_text, parse_mode="HTML")

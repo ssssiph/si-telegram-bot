@@ -7,7 +7,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 
 from database import init_db
-from handlers import start, account, events, contact, manage
+from handlers import start, account, events, contact, manage, promo
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -20,7 +20,8 @@ dp.include_routers(
     account.router,
     events.router,
     contact.router,
-    manage.router
+    manage.router,
+    promo.router
 )
 
 async def main():

@@ -29,6 +29,7 @@ async def init_db():
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
+            # Таблица пользователей
             await cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     tg_id BIGINT PRIMARY KEY,
@@ -39,6 +40,7 @@ async def init_db():
                     blocked BOOLEAN DEFAULT FALSE
                 )
             """)
+            # Таблица событий
             await cur.execute("""
                 CREATE TABLE IF NOT EXISTS events (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -50,6 +52,7 @@ async def init_db():
                     creator_id BIGINT
                 )
             """)
+            # Таблица обращений
             await cur.execute("""
                 CREATE TABLE IF NOT EXISTS contacts (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -59,6 +62,25 @@ async def init_db():
                     message TEXT,
                     answered BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Новая таблица промокодов
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS promo_codes (
+                    code VARCHAR(50) PRIMARY KEY,
+                    reward INT NOT NULL
+                )
+            """)
+
+            # Таблица использования промокодов
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS promo_codes_usage (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    tg_id BIGINT,
+                    code VARCHAR(50),
+                    used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY (tg_id, code)
                 )
             """)
     finally:

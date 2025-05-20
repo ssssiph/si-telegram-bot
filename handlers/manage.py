@@ -5,7 +5,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, I
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiomysql import DictCursor
-from database import get_connection
+from database import get_connection, safe_close
 
 router = Router()
 
@@ -776,20 +776,19 @@ async def user_toggle_block_callback(query: types.CallbackQuery, state: FSMConte
 @router.callback_query(lambda q: q.data == "admin_broadcast")
 async def broadcast_init(query: types.CallbackQuery, state: FSMContext):
     await query.message.answer(
-        "Введите объявление. Оно может содержать текст, фото, видео, голосовое сообщение и т.п."
+        "Введите объявление. Оно может содержать текст, фото, видео, голосовую запись и т.п."
     )
     await state.set_state(BroadcastState.waiting_for_broadcast_message)
     await query.answer("Ожидается объявление.")
 
-@router.message(BroadcastState.waiting_for_broadcast_message, content_types=[
-    "text", "photo", "video", "voice", "audio", "document", "sticker"
-])
+@router.message(BroadcastState.waiting_for_broadcast_message)
 async def process_broadcast(message: Message, state: FSMContext):
     conn = await get_connection()
     try:
         async with conn.cursor(DictCursor) as cur:
             await cur.execute("SELECT tg_id FROM users")
             users = await cur.fetchall()
+            
         for user in users:
             try:
                 await message.bot.copy_message(

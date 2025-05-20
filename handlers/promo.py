@@ -1,4 +1,3 @@
-# promo.py
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
@@ -12,8 +11,12 @@ class PromoState(StatesGroup):
 
 @router.message(F.text == "🎟️ Промокоды")
 async def promo_entry(message: Message, state: FSMContext):
-    await state.set_state(PromoState.waiting_for_code)
-    await message.answer("🔑 Введите промокод:")
+    # Пока что вместо оригинальной логики выводим простое сообщение
+    await message.answer("workin'")
+    
+    # Чтобы восстановить функционал, раскомментируйте нижеследующие строки:
+    # await state.set_state(PromoState.waiting_for_code)
+    # await message.answer("🔑 Введите промокод:")
 
 @router.message(PromoState.waiting_for_code)
 async def promo_process(message: Message, state: FSMContext):
@@ -38,7 +41,7 @@ async def promo_process(message: Message, state: FSMContext):
                 await message.answer("⚠️ Этот промокод уже был использован вами.")
                 return
 
-            # Регистрируем пользователя если он отсутствует
+            # Регистрируем пользователя, если он отсутствует
             await cur.execute("SELECT 1 FROM users WHERE tg_id = %s", (user_id,))
             exists = await cur.fetchone()
             if not exists:

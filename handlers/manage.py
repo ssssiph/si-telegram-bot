@@ -43,6 +43,9 @@ class UserEditState(StatesGroup):
 class DiamondsState(StatesGroup):
     waiting_for_amount = State()
 
+class PromoCreationState(StatesGroup):
+    waiting_for_promo_data = State()
+
 async def is_user_blocked(user_id: int) -> bool:
     conn = await get_connection()
     try:
@@ -99,10 +102,11 @@ async def admin_panel(message: Message, state: FSMContext):
         if user_rank != "Генеральный директор":
             await message.answer("Отказано в доступе.")
             return
-        kb = InlineKeyboardMarkup(inline_keyboard=[
+         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📥 Обращения", callback_data="admin_contacts_list")],
             [InlineKeyboardButton(text="📅 События", callback_data="admin_events_list")],
             [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users_list")],
+            [InlineKeyboardButton(text="🎟️ Промокоды", callback_data="admin_promo_codes")],
             [InlineKeyboardButton(text="📢 Объявления", callback_data="admin_broadcast")]
         ])
         await message.answer("Панель управления. Выберите раздел:", reply_markup=kb)
@@ -231,6 +235,58 @@ async def process_contact_reply(message: Message, state: FSMContext):
         await state.clear()
         await safe_close(conn)
         await send_contacts_list_to_admin(message, state)
+
+# Промокоды
+@router.callback_query(lambda q: q.data == "admin_promo_codes")
+async def admin_promo_codes_callback(query: types.CallbackQuery, state: FSMContext):
+    conn = await get_connection()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT code, reward FROM promo_codes ORDER BY code ASC")
+            promo_codes = await cur.fetchall()
+        
+        if not promo_codes:
+            promo_list_text = "Нет активных промокодов."
+        else:
+            promo_list_text = "<b>Активные промокоды:</b>\n\n"
+            for code, reward in promo_codes:
+                promo_list_text += f"🔹 {code} — {reward} 💎\n"
+
+        await query.message.answer(
+            f"{promo_list_text}\n\nВведите новый промокод в формате:\n\n<b>Название | Количество алмазиков</b>"
+        )
+        await state.set_state(PromoCreationState.waiting_for_promo_data)
+    except Exception as e:
+        await query.message.answer(f"Ошибка при загрузке промокодов: {e}")
+    finally:
+        await safe_close(conn)
+
+@router.message(PromoCreationState.waiting_for_promo_data)
+async def process_promo_creation(message: Message, state: FSMContext):
+    parts = [s.strip() for s in message.text.split("|")]
+    if len(parts) != 2:
+        await message.answer("Ошибка! Используйте формат:\n\n<b>Название | Количество алмазиков</b>")
+        return
+    
+    code, reward_str = parts
+    try:
+        reward = int(reward_str)
+    except ValueError:
+        await message.answer("Ошибка! Количество алмазиков должно быть числом.")
+        return
+
+    conn = await get_connection()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("INSERT INTO promo_codes (code, reward) VALUES (%s, %s)", (code, reward))
+            await conn.commit()
+        await message.answer(f"✅ Промокод {code} на {reward} 💎 успешно добавлен!")
+    except Exception as e:
+        await message.answer(f"Ошибка при добавлении промокода: {e}")
+    finally:
+        await state.clear()
+        await safe_close(conn)
+
 
 # События
 async def send_events_list_to_admin(dest_message: Message, state: FSMContext):

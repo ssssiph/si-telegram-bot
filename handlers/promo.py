@@ -1,4 +1,4 @@
-#promo.py
+# promo.py
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
@@ -23,24 +23,22 @@ async def promo_process(message: Message, state: FSMContext):
 
     try:
         async with conn.cursor() as cur:
-            # Проверяем промокод
+            # Проверка промокода
             await cur.execute("SELECT reward FROM promo_codes WHERE code = %s", (code,))
-            result = await cur.fetchone()
-
-            if not result:
+            promo = await cur.fetchone()
+            if not promo:
                 await message.answer("❌ Неверный или несуществующий промокод.")
                 return
+            reward = promo[0]
 
-            reward = result[0]
-
-            # Проверка использования
+            # Проверка использован ли
             await cur.execute("SELECT 1 FROM promo_codes_usage WHERE tg_id = %s AND code = %s", (user_id, code))
             used = await cur.fetchone()
             if used:
-                await message.answer("⚠️ Этот промокод уже был вами использован.")
+                await message.answer("⚠️ Этот промокод уже был использован вами.")
                 return
 
-            # Если пользователь не существует — создаём
+            # Регистрируем пользователя если он отсутствует
             await cur.execute("SELECT 1 FROM users WHERE tg_id = %s", (user_id,))
             exists = await cur.fetchone()
             if not exists:
@@ -49,17 +47,18 @@ async def promo_process(message: Message, state: FSMContext):
                     (user_id, message.from_user.username or "-", message.from_user.full_name or "-")
                 )
 
-            # Регистрируем использование и даём награду
+            # Сохраняем использование и начисляем награду
             await cur.execute("INSERT INTO promo_codes_usage (tg_id, code) VALUES (%s, %s)", (user_id, code))
             await cur.execute("UPDATE users SET balance = balance + %s WHERE tg_id = %s", (reward, user_id))
             await conn.commit()
 
             await message.answer(f"🎉 Промокод успешно активирован! Вы получили {reward} 💎.")
-            print(f"[PROMO] Промокод {code} активирован для пользователя {user_id}")
 
     except Exception as e:
         print(f"[PROMO ERROR] {e}")
-        await message.answer("🚫 Произошла ошибка при активации промокода.")
+        await message.answer("🚫 Ошибка при активации промокода.")
     finally:
         await state.clear()
-        await safe_close(conn)
+        close_result = safe_close(conn)
+        if hasattr(close_result, '__await__'):
+            await close_result

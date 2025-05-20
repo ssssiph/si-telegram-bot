@@ -1,80 +1,92 @@
-import asyncio
-import inspect
-from aiogram import Router, F
-from aiogram.types import Message
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from database import get_connection, safe_close
+import aiomysql
+import os
+from dotenv import load_dotenv
 
-router = Router()
+load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-class PromoActivationState(StatesGroup):
-    waiting_for_promo_code = State()
+def parse_mysql_url(url: str):
+    url = url.replace("mysql://", "")
+    user_pass, host_db = url.split("@")
+    user, password = user_pass.split(":")
+    host_port, db_name = host_db.split("/")
+    host, port = host_port.split(":")
+    return {
+        "user": user,
+        "password": password,
+        "host": host,
+        "port": int(port),
+        "db": db_name,
+        "autocommit": True
+    }
 
-@router.message(F.text == "🎟️ Промокоды")
-async def promo_activation_start(message: Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state == PromoActivationState.waiting_for_promo_code.state:
-        print(f"[PROMO] User {message.from_user.id} уже ожидает ввод кода")
-        return
-    print(f"[PROMO] User {message.from_user.id} нажал '🎟️ Промокоды'")
-    await state.set_state(PromoActivationState.waiting_for_promo_code)
-    await message.answer("Введите промокод:")
+DB_CONFIG = parse_mysql_url(DATABASE_URL)
 
-@router.message(PromoActivationState.waiting_for_promo_code)
-async def process_promo_activation(message: Message, state: FSMContext):
-    if message.text == "🎟️ Промокоды":
-        return
+async def get_connection():
+    return await aiomysql.connect(**DB_CONFIG)
 
-    code = message.text.strip().upper()
-    user_id = message.from_user.id
-    print(f"[PROMO] User {user_id} ввёл код: {code}")
+async def safe_close(conn):
+    """Пытается корректно закрыть переданное соединение."""
+    if conn:
+        conn.close()
 
+async def init_db():
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
-            await cur.execute("SELECT rank FROM users WHERE tg_id = %s", (user_id,))
-            user_row = await cur.fetchone()
+            # Таблица пользователей
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    tg_id BIGINT PRIMARY KEY,
+                    username VARCHAR(255),
+                    full_name VARCHAR(255),
+                    rank VARCHAR(50) DEFAULT 'Гость',
+                    balance INT DEFAULT 0,
+                    blocked BOOLEAN DEFAULT FALSE
+                )
+            """)
+            # Таблица событий
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS events (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    title TEXT,
+                    description TEXT,
+                    prize TEXT,
+                    datetime TEXT,
+                    media TEXT,
+                    creator_id BIGINT
+                )
+            """)
+            # Таблица обращений
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    tg_id BIGINT,
+                    username VARCHAR(255),
+                    full_name VARCHAR(255),
+                    message TEXT,
+                    answered BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-            if not user_row:
-                await message.answer("Сначала отправьте /start.")
-                await state.clear()
-                return
+            # Новая таблица промокодов
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS promo_codes (
+                    code VARCHAR(50) PRIMARY KEY,
+                    reward INT NOT NULL
+                )
+            """)
 
-            rank = user_row[0]
-            if rank == "Гость":
-                await message.answer("🚫 Промокоды недоступны для гостей.")
-                await state.clear()
-                return
-
-            await cur.execute("SELECT reward FROM promo_codes WHERE code = %s", (code,))
-            promo = await cur.fetchone()
-            if not promo:
-                await message.answer("Неверный промокод.")
-                await state.clear()
-                return
-
-            reward = promo[0]
-
-            await cur.execute("SELECT 1 FROM promo_codes_usage WHERE tg_id = %s AND code = %s", (user_id, code))
-            already_used = await cur.fetchone()
-            if already_used:
-                await message.answer("Вы уже использовали этот промокод.")
-                await state.clear()
-                return
-
-            await cur.execute("INSERT INTO promo_codes_usage (tg_id, code) VALUES (%s, %s)", (user_id, code))
-            await cur.execute("UPDATE users SET balance = balance + %s WHERE tg_id = %s", (reward, user_id))
-            await conn.commit()
-
-        await message.answer(f"🎉 Промокод активирован! Получено {reward} 💎.")
-        print(f"[PROMO] Промокод {code} активирован пользователем {user_id}, +{reward} 💎")
-    except Exception as e:
-        await message.answer(f"⚠️ Ошибка при активации промокода: {e}")
-        print("[PROMO ERROR]", e)
+            # Таблица использования промокодов
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS promo_codes_usage (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    tg_id BIGINT,
+                    code VARCHAR(50),
+                    used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY (tg_id, code)
+                )
+            """)
     finally:
-        await state.clear()
-        if inspect.isawaitable(safe_close(conn)):
-            await safe_close(conn)
-        else:
-            safe_close(conn)
+        conn.close()

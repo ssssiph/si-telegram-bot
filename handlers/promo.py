@@ -9,9 +9,9 @@ router = Router()
 class PromoActivationState(StatesGroup):
     waiting_for_promo_code = State()
 
-@router.message(F.text == "🎟️ Промокоды")  # Кнопка в главном меню
+@router.message(F.text == "🎟️ Промокоды")
 async def promo_activation_start(message: Message, state: FSMContext):
-    print(f"[PROMO] {message.from_user.id} нажал '🎟️ Промокоды'")
+    print(f"[PROMO] User {message.from_user.id} нажал на кнопку '🎟️ Промокоды'")
     await state.set_state(PromoActivationState.waiting_for_promo_code)
     await message.answer("Введите промокод:")
 

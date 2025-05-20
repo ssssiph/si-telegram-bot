@@ -263,16 +263,21 @@ async def admin_promo_codes_callback(query: types.CallbackQuery, state: FSMConte
 
 @router.message(PromoCreationState.waiting_for_promo_data)
 async def process_promo_creation(message: Message, state: FSMContext):
+    if message.text.strip().lower() == "отмена":
+        await state.clear()
+        await message.answer("🚫 Создание промокода отменено.")
+        return
+    
     parts = [s.strip() for s in message.text.split("|")]
     if len(parts) != 2:
-        await message.answer("Ошибка! Используйте формат:\n\n<b>Название | Количество алмазов</b>")
+        await message.answer("Ошибка! Используйте формат:\n\n<b>Название | Количество алмазиков</b>\n\nИли напишите 'Отмена' для выхода.")
         return
     
     code, reward_str = parts
     try:
         reward = int(reward_str)
     except ValueError:
-        await message.answer("Ошибка! Количество алмазов должно быть числом.")
+        await message.answer("Ошибка! Количество алмазиков должно быть числом.\n\nИли напишите 'Отмена' для выхода.")
         return
 
     conn = await get_connection()
@@ -286,7 +291,6 @@ async def process_promo_creation(message: Message, state: FSMContext):
     finally:
         await state.clear()
         await safe_close(conn)
-
 
 # События
 async def send_events_list_to_admin(dest_message: Message, state: FSMContext):

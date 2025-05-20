@@ -775,13 +775,16 @@ async def user_toggle_block_callback(query: types.CallbackQuery, state: FSMConte
 # Объявления
 @router.callback_query(lambda q: q.data == "admin_broadcast")
 async def broadcast_init(query: types.CallbackQuery, state: FSMContext):
-    await query.message.answer("Введите текст объявления:")
+    await query.message.answer(
+        "Введите объявление. Оно может содержать текст, фото, видео, голосовое сообщение и т.п."
+    )
     await state.set_state(BroadcastState.waiting_for_broadcast_message)
-    await query.answer("Ожидается текст объявления.")
+    await query.answer("Ожидается объявление.")
 
-@router.message(BroadcastState.waiting_for_broadcast_message)
+@router.message(BroadcastState.waiting_for_broadcast_message, content_types=[
+    "text", "photo", "video", "voice", "audio", "document", "sticker"
+])
 async def process_broadcast(message: Message, state: FSMContext):
-    broadcast_text = message.text
     conn = await get_connection()
     try:
         async with conn.cursor(DictCursor) as cur:
@@ -789,7 +792,11 @@ async def process_broadcast(message: Message, state: FSMContext):
             users = await cur.fetchall()
         for user in users:
             try:
-                await message.bot.send_message(user['tg_id'], broadcast_text)
+                await message.bot.copy_message(
+                    chat_id=user["tg_id"],
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id
+                )
             except Exception as e:
                 print(f"Ошибка отправки объявления пользователю {user['tg_id']}: {e}")
         await message.answer("Объявление отправлено всем пользователям.")

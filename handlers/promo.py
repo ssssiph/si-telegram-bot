@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from database import get_connection, safe_close  # добавляем safe_close
+from database import get_connection, safe_close
 
 router = Router()
 
@@ -17,8 +17,7 @@ async def promo_activation_start(message: Message, state: FSMContext):
 
 @router.message(PromoActivationState.waiting_for_promo_code)
 async def process_promo_activation(message: Message, state: FSMContext):
-    # Если требуется привести код к единому регистру, можно использовать .upper() или .lower()
-    code = message.text.strip()
+    code = message.text.strip().upper()
     print(f"[PROMO] User {message.from_user.id} ввёл промокод: '{code}'")
     
     conn = await get_connection()
@@ -32,8 +31,9 @@ async def process_promo_activation(message: Message, state: FSMContext):
             await message.answer("Неверный промокод. Попробуйте снова.")
             await state.clear()
             return
-
+        
         reward = row[0]
+        
         async with conn.cursor() as cur:
             await cur.execute("SELECT * FROM promo_codes_usage WHERE tg_id = %s AND code = %s", (message.from_user.id, code))
             usage = await cur.fetchone()
@@ -43,7 +43,7 @@ async def process_promo_activation(message: Message, state: FSMContext):
             await message.answer("Вы уже использовали данный промокод!")
             await state.clear()
             return
-
+        
         async with conn.cursor() as cur:
             await cur.execute("INSERT INTO promo_codes_usage (tg_id, code) VALUES (%s, %s)", (message.from_user.id, code))
             await cur.execute("UPDATE users SET balance = balance + %s WHERE tg_id = %s", (reward, message.from_user.id))

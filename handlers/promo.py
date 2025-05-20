@@ -18,31 +18,35 @@ async def promo_activation_start(message: Message, state: FSMContext):
 @router.message(PromoActivationState.waiting_for_promo_code)
 async def process_promo_activation(message: Message, state: FSMContext):
     code = message.text.strip()
-    print(f"[PROMO DEBUG] Пользователь {message.from_user.id} ввёл промокод: '{code}'")
+    print(f"[PROMO] User {message.from_user.id} ввёл промокод: '{code}'")
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
             await cur.execute("SELECT reward FROM promo_codes WHERE code = %s", (code,))
             row = await cur.fetchone()
-        print(f"[PROMO DEBUG] SELECT reward -> row: {row}")
+        print(f"[PROMO] Полученная строка для промокода: {row}")
+        
         if row is None:
             await message.answer("Неверный промокод. Попробуйте снова.")
             await state.clear()
             return
+
         reward = row[0]
         async with conn.cursor() as cur:
             await cur.execute("SELECT * FROM promo_codes_usage WHERE tg_id = %s AND code = %s", (message.from_user.id, code))
             usage = await cur.fetchone()
-        print(f"[PROMO DEBUG] Проверка использования -> usage: {usage}")
+        print(f"[PROMO] Проверка использования промокода: {usage}")
+        
         if usage is not None:
             await message.answer("Вы уже использовали данный промокод!")
             await state.clear()
             return
+
         async with conn.cursor() as cur:
             await cur.execute("INSERT INTO promo_codes_usage (tg_id, code) VALUES (%s, %s)", (message.from_user.id, code))
             await cur.execute("UPDATE users SET balance = balance + %s WHERE tg_id = %s", (reward, message.from_user.id))
         await conn.commit()
-        print(f"[PROMO DEBUG] Баланс обновлён, выдача: {reward}")
+        print(f"[PROMO] Баланс обновлён, начислено {reward} 💎")
         await message.answer(f"Поздравляем! Вы получили {reward} 💎.")
     except Exception as e:
         print(f"[PROMO ERROR] {e}")

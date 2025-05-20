@@ -106,7 +106,8 @@ async def admin_panel(message: Message, state: FSMContext):
                 await message.answer("❗ Пользователь не найден. Используйте /start для регистрации.")
                 return
             user_rank = result[0]
-        if user_rank != "Генеральный директор":
+        current_state = await state.get_state()
+        if current_state is None and user_rank != "Генеральный директор":
             await message.answer("🚫 Отказано в доступе.")
             return
         kb = InlineKeyboardMarkup(inline_keyboard=[

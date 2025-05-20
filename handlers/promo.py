@@ -9,22 +9,21 @@ router = Router()
 class PromoState(StatesGroup):
     waiting_for_code = State()
 
-@router.message(F.text == "🎟️ Промокоды")
+@router.message(F.text == "🎟️ Промокоды", flags={"skip_state": True})
 async def promo_entry(message: Message, state: FSMContext):
-    # Устанавливаем состояние и просим ввести промокод
+    # При нажатии на кнопку «🎟️ Промокоды» устанавливаем состояние ввода
     await state.set_state(PromoState.waiting_for_code)
     await message.answer("🔑 Введите промокод:")
 
 @router.message(PromoState.waiting_for_code)
 async def promo_process(message: Message, state: FSMContext):
-    # Приводим промокод к единому регистру
-    code = message.text.strip().upper()
+    # Обработка введённого промокода
+    code = message.text.strip().upper()  # Приводим промокод к верхнему регистру
     user_id = message.from_user.id
     conn = await get_connection()
-
     try:
         async with conn.cursor() as cur:
-            # Проверяем наличие такого промокода
+            # Проверка наличия такого промокода в базе
             await cur.execute("SELECT reward FROM promo_codes WHERE code = %s", (code,))
             promo = await cur.fetchone()
             if not promo:
@@ -32,14 +31,17 @@ async def promo_process(message: Message, state: FSMContext):
                 return
             reward = promo[0]
 
-            # Проверяем, использовал ли уже пользователь данный промокод
-            await cur.execute("SELECT 1 FROM promo_codes_usage WHERE tg_id = %s AND code = %s", (user_id, code))
+            # Проверка: использовал ли уже пользователь данный промокод
+            await cur.execute(
+                "SELECT 1 FROM promo_codes_usage WHERE tg_id = %s AND code = %s",
+                (user_id, code)
+            )
             used = await cur.fetchone()
             if used:
                 await message.answer("⚠️ Этот промокод уже был использован вами.")
                 return
 
-            # Если пользователя нет в базе, регистрируем его
+            # Регистрация пользователя, если его ещё нет в таблице users
             await cur.execute("SELECT 1 FROM users WHERE tg_id = %s", (user_id,))
             exists = await cur.fetchone()
             if not exists:
@@ -59,7 +61,7 @@ async def promo_process(message: Message, state: FSMContext):
         await message.answer("🚫 Ошибка при активации промокода.")
     finally:
         await state.clear()
-        # Если safe_close является синхронной (возвращает None), то просто вызываем её
-        result = safe_close(conn)
-        if result is not None and hasattr(result, '__await__'):
-            await result
+        # Если safe_close возвращает awaitable – ждём его, иначе просто вызываем
+        res = safe_close(conn)
+        if res is not None and hasattr(res, '__await__'):
+            await res

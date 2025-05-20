@@ -107,7 +107,7 @@ async def admin_panel(message: Message, state: FSMContext):
                 return
             user_rank = result[0]
         if user_rank != "Генеральный директор":
-            await message.answer("Отказано в доступе.")
+            await message.answer("🚫 Отказано в доступе.")
             return
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📥 Обращения", callback_data="admin_contacts_list")],

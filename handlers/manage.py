@@ -253,7 +253,7 @@ async def admin_promo_codes_callback(query: types.CallbackQuery, state: FSMConte
                 promo_list_text += f"🔹 {code} — {reward} 💎\n"
 
         await query.message.answer(
-            f"{promo_list_text}\n\nВведите новый промокод в формате:\n\n<b>Название | Количество алмазиков</b>"
+            f"{promo_list_text}\n\nВведите новый промокод в формате:\n\n<b>Название | Количество алмазов</b>"
         )
         await state.set_state(PromoCreationState.waiting_for_promo_data)
     except Exception as e:
@@ -265,14 +265,14 @@ async def admin_promo_codes_callback(query: types.CallbackQuery, state: FSMConte
 async def process_promo_creation(message: Message, state: FSMContext):
     parts = [s.strip() for s in message.text.split("|")]
     if len(parts) != 2:
-        await message.answer("Ошибка! Используйте формат:\n\n<b>Название | Количество алмазиков</b>")
+        await message.answer("Ошибка! Используйте формат:\n\n<b>Название | Количество алмазов</b>")
         return
     
     code, reward_str = parts
     try:
         reward = int(reward_str)
     except ValueError:
-        await message.answer("Ошибка! Количество алмазиков должно быть числом.")
+        await message.answer("Ошибка! Количество алмазов должно быть числом.")
         return
 
     conn = await get_connection()

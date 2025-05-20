@@ -12,37 +12,43 @@ class PromoActivationState(StatesGroup):
 
 @router.message(F.text == "🎟️ Промокоды")
 async def promo_activation_start(message: Message, state: FSMContext):
-    # При нажатии на кнопку промокодов устанавливаем состояние
-    print(f"[PROMO] User {message.from_user.id} нажал на кнопку '🎟️ Промокоды'")
+    # Если уже в режиме ввода промокода, не устанавливаем состояние повторно
+    current_state = await state.get_state()
+    if current_state == PromoActivationState.waiting_for_promo_code.state:
+        print(f"[PROMO] Пользователь {message.from_user.id} повторно нажал кнопку '🎟️ Промокоды' — состояние уже установлено")
+        return
+    print(f"[PROMO] Пользователь {message.from_user.id} нажал на кнопку '🎟️ Промокоды'")
     await state.set_state(PromoActivationState.waiting_for_promo_code)
     await message.answer("Введите промокод:")
 
 @router.message(PromoActivationState.waiting_for_promo_code)
 async def process_promo_activation(message: Message, state: FSMContext):
-    # Приводим промокод к верхнему регистру (если база содержит коды в верхнем регистре)
+    # Если сообщение – повторное нажатие кнопки, его игнорируем
+    if message.text == "🎟️ Промокоды":
+        print(f"[PROMO] Игнорируем повторное нажатие кнопки пользователем {message.from_user.id}")
+        return
+
+    # Приводим ввод к верхнему регистру (если в базе сохранён в верхнем)
     code = message.text.strip().upper()
     print(f"[PROMO] Запуск process_promo_activation для пользователя {message.from_user.id}")
-    print(f"[PROMO] User {message.from_user.id} ввёл промокод: '{code}'")
+    print(f"[PROMO] Пользователь {message.from_user.id} ввёл промокод: '{code}'")
     
     conn = await get_connection()
     try:
-        # Проверяем наличие указанного промокода в таблице promo_codes
+        # Ищем промокод в базе
         async with conn.cursor() as cursor:
-            await cursor.execute(
-                "SELECT reward FROM promo_codes WHERE code = %s", (code,)
-            )
+            await cursor.execute("SELECT reward FROM promo_codes WHERE code = %s", (code,))
             promo_row = await cursor.fetchone()
         print(f"[PROMO] Результат запроса промокода: {promo_row}")
         
         if promo_row is None:
-            # Если промокод не найден
             await message.answer("Неверный промокод. Попробуйте снова.")
             await state.clear()
             return
         
         reward = promo_row[0]
         
-        # Проверяем, не использовал ли уже пользователь этот промокод
+        # Проверяем, использовал ли пользователь этот промокод ранее
         async with conn.cursor() as cursor:
             await cursor.execute(
                 "SELECT 1 FROM promo_codes_usage WHERE tg_id = %s AND code = %s",
@@ -56,7 +62,7 @@ async def process_promo_activation(message: Message, state: FSMContext):
             await state.clear()
             return
         
-        # Регистрируем использование промокода и обновляем баланс пользователя
+        # Регистрируем использование промокода и обновляем баланс
         async with conn.cursor() as cursor:
             await cursor.execute(
                 "INSERT INTO promo_codes_usage (tg_id, code) VALUES (%s, %s)",

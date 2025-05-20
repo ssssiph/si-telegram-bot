@@ -40,7 +40,7 @@ async def init_db():
                     tg_id BIGINT PRIMARY KEY,
                     username VARCHAR(255),
                     full_name VARCHAR(255),
-                    rank VARCHAR(50) DEFAULT 'Гость',
+                    `rank VARCHAR(50) DEFAULT 'Гость',
                     balance INT DEFAULT 0,
                     blocked BOOLEAN DEFAULT FALSE
                 )

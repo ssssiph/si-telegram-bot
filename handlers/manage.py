@@ -75,23 +75,25 @@ try:
         if result is None or (result[0] == "Гость" and m.text != "🎟️ Промокоды"):
             await m.answer("🚫 Отказано в доступе.")
             return
+
         sender_info = f"{m.from_user.full_name} (@{m.from_user.username})" if m.from_user.username else m.from_user.full_name
         content = m.text if m.content_type == "text" else f"[Медиа: {m.content_type}]\nОтправитель: {sender_info}"
-        
+
         async with conn.cursor() as cur:
             await cur.execute(
                 "INSERT INTO contacts (tg_id, full_name, username, message, answered) VALUES (%s, %s, %s, %s, %s)",
                 (m.from_user.id, m.from_user.full_name, m.from_user.username, content, False)
             )
             await conn.commit()
-        
+
         await m.answer("Ваше обращение принято.")
 
 except Exception as e:
     print(f"Ошибка: {e}")
     await m.answer("❗ Произошла ошибка. Попробуйте позже.")
-    finally:
-        conn.close()
+
+finally:
+    await safe_close(conn)
 
 @router.message(lambda message: message.text and message.text.strip().lower() == "⚙️ управление")
 async def admin_panel(message: Message, state: FSMContext):

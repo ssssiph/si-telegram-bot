@@ -20,8 +20,8 @@ dp.include_routers(
     account.router,
     events.router,
     contact.router,
-    manage.router,
-    promo.router
+    promo.router,
+    manage.router
 )
 
 async def main():

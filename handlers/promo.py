@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from database import get_connection
+from database import get_connection, safe_close  # добавляем safe_close
 
 router = Router()
 
@@ -17,8 +17,10 @@ async def promo_activation_start(message: Message, state: FSMContext):
 
 @router.message(PromoActivationState.waiting_for_promo_code)
 async def process_promo_activation(message: Message, state: FSMContext):
+    # Если требуется привести код к единому регистру, можно использовать .upper() или .lower()
     code = message.text.strip()
     print(f"[PROMO] User {message.from_user.id} ввёл промокод: '{code}'")
+    
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:

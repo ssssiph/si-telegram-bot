@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
@@ -12,43 +13,40 @@ class PromoActivationState(StatesGroup):
 
 @router.message(F.text == "🎟️ Промокоды")
 async def promo_activation_start(message: Message, state: FSMContext):
-    # Если уже в режиме ввода промокода, не устанавливаем состояние повторно
     current_state = await state.get_state()
     if current_state == PromoActivationState.waiting_for_promo_code.state:
-        print(f"[PROMO] Пользователь {message.from_user.id} повторно нажал кнопку '🎟️ Промокоды' — состояние уже установлено")
+        print(f"[PROMO] User {message.from_user.id} повторно нажал кнопку '🎟️ Промокоды' — состояние уже установлено")
         return
-    print(f"[PROMO] Пользователь {message.from_user.id} нажал на кнопку '🎟️ Промокоды'")
+    print(f"[PROMO] User {message.from_user.id} нажал на кнопку '🎟️ Промокоды'")
     await state.set_state(PromoActivationState.waiting_for_promo_code)
     await message.answer("Введите промокод:")
 
 @router.message(PromoActivationState.waiting_for_promo_code)
 async def process_promo_activation(message: Message, state: FSMContext):
-    # Если сообщение – повторное нажатие кнопки, его игнорируем
+    # Если пользователь случайно нажал кнопку ещё раз, игнорируем
     if message.text == "🎟️ Промокоды":
         print(f"[PROMO] Игнорируем повторное нажатие кнопки пользователем {message.from_user.id}")
         return
 
-    # Приводим ввод к верхнему регистру (если в базе сохранён в верхнем)
+    # Приводим ввод к верхнему регистру (если промокоды хранятся в базе в верхнем регистре)
     code = message.text.strip().upper()
     print(f"[PROMO] Запуск process_promo_activation для пользователя {message.from_user.id}")
-    print(f"[PROMO] Пользователь {message.from_user.id} ввёл промокод: '{code}'")
+    print(f"[PROMO] User {message.from_user.id} ввёл промокод: '{code}'")
     
     conn = await get_connection()
     try:
-        # Ищем промокод в базе
+        # Поиск промокода в таблице promo_codes
         async with conn.cursor() as cursor:
             await cursor.execute("SELECT reward FROM promo_codes WHERE code = %s", (code,))
             promo_row = await cursor.fetchone()
         print(f"[PROMO] Результат запроса промокода: {promo_row}")
-        
         if promo_row is None:
             await message.answer("Неверный промокод. Попробуйте снова.")
             await state.clear()
             return
-        
         reward = promo_row[0]
         
-        # Проверяем, использовал ли пользователь этот промокод ранее
+        # Проверяем, использовал ли пользователь данный промокод
         async with conn.cursor() as cursor:
             await cursor.execute(
                 "SELECT 1 FROM promo_codes_usage WHERE tg_id = %s AND code = %s",
@@ -56,13 +54,12 @@ async def process_promo_activation(message: Message, state: FSMContext):
             )
             usage_exists = await cursor.fetchone()
         print(f"[PROMO] Проверка использования промокода: {usage_exists}")
-        
         if usage_exists is not None:
             await message.answer("Вы уже использовали данный промокод!")
             await state.clear()
             return
         
-        # Регистрируем использование промокода и обновляем баланс
+        # Регистрируем использование промокода и обновляем баланс пользователя
         async with conn.cursor() as cursor:
             await cursor.execute(
                 "INSERT INTO promo_codes_usage (tg_id, code) VALUES (%s, %s)",
@@ -80,4 +77,8 @@ async def process_promo_activation(message: Message, state: FSMContext):
         await message.answer(f"Ошибка при обработке промокода: {e}")
     finally:
         await state.clear()
-        await safe_close(conn)
+        # Если safe_close является ассинхронной корутиной – await её, иначе вызываем без await.
+        if inspect.isawaitable(safe_close(conn)):
+            await safe_close(conn)
+        else:
+            safe_close(conn)

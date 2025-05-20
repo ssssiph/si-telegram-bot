@@ -68,13 +68,13 @@ async def handle_incoming_contact(m: Message, state: FSMContext):
         return
     conn = await get_connection()
     try:
-        async with conn.cursor() as cur:
+async with conn.cursor() as cur:
     await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (m.from_user.id,))
     result = await cur.fetchone()
 
-if result is None or (result[0] == "Гость" and m.text != "🎟️ Промокоды"):
-    await m.answer("🚫 Отказано в доступе.")
-    return
+    if result is None or (result[0] == "Гость" and m.text != "🎟️ Промокоды"):
+        await m.answer("🚫 Отказано в доступе.")
+        return
         sender_info = f"{m.from_user.full_name} (@{m.from_user.username})" if m.from_user.username else m.from_user.full_name
         content = m.text if m.content_type == "text" else f"[Медиа: {m.content_type}]\nОтправитель: {sender_info}"
         async with conn.cursor() as cur:

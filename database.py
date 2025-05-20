@@ -25,6 +25,11 @@ DB_CONFIG = parse_mysql_url(DATABASE_URL)
 async def get_connection():
     return await aiomysql.connect(**DB_CONFIG)
 
+async def safe_close(conn):
+    """Пытается корректно закрыть переданное соединение."""
+    if conn:
+        conn.close()
+
 async def init_db():
     conn = await get_connection()
     try:

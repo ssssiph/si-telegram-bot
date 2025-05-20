@@ -67,10 +67,12 @@ async def handle_incoming_contact(m: Message, state: FSMContext):
         await m.answer("🚫 Отказано в доступе.")
         return
     conn = await get_connection()
-try:
-    async with conn.cursor() as cur:
-        await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (m.from_user.id,))
-        result = await cur.fetchone()
+async def handle_message(m: Message):
+    conn = await get_connection()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT `rank` FROM users WHERE tg_id = %s", (m.from_user.id,))
+            result = await cur.fetchone()
 
         if result is None or (result[0] == "Гость" and m.text != "🎟️ Промокоды"):
             await m.answer("🚫 Отказано в доступе.")
@@ -88,12 +90,12 @@ try:
 
         await m.answer("Ваше обращение принято.")
 
-except Exception as e:
-    print(f"Ошибка: {e}")
-    await m.answer("❗ Произошла ошибка. Попробуйте позже.")
+    except Exception as e:
+        print(f"Ошибка: {e}")
+        await m.answer("❗ Произошла ошибка. Попробуйте позже.")
 
-finally:
-    await safe_close(conn)
+    finally:
+        await safe_close(conn)
 
 @router.message(lambda message: message.text and message.text.strip().lower() == "⚙️ управление")
 async def admin_panel(message: Message, state: FSMContext):

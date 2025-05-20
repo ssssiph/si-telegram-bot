@@ -59,9 +59,8 @@ async def is_user_blocked(user_id: int) -> bool:
     finally:
         await safe_close(conn)
 
-@router.message(lambda m: m.chat.type == "private" 
-                           and m.from_user.id != ADMIN_ID 
-                           and m.text not in ["🎟️ Промокоды", "⚙️ управление"])
+@router.message(lambda m: m.chat.type == "private" and m.from_user.id != ADMIN_ID 
+                           and m.text not in ["🎟️ Промокоды", "⚙️ Управление"])
 async def handle_incoming_contact(m: Message, state: FSMContext):
     if await state.get_state() is not None:
         return

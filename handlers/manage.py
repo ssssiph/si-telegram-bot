@@ -134,12 +134,18 @@ async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
         page = data.get("contacts_page", 1)
         per_page = 9
         offset = (page - 1) * per_page
+
         async with conn.cursor(DictCursor) as cur:
-            await cur.execute("SELECT * FROM contacts WHERE answered = FALSE ORDER BY created_at DESC LIMIT %s OFFSET %s", (per_page, offset))
+            await cur.execute(
+                "SELECT * FROM contacts WHERE answered = FALSE ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                (per_page, offset)
+            )
             contacts = await cur.fetchall()
+
         if not contacts:
             await dest_message.answer("Нет новых обращений.")
             return
+
         buttons = []
         for contact in contacts:
             cid = contact.get("id")
@@ -147,24 +153,30 @@ async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
             username = contact.get("username") or "-"
             created_at = contact.get("created_at")
             date_str = str(created_at) if created_at else ""
+
             btn_text = f"{full_name} (@{username} | {cid}) {date_str}"
             buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"contact_reply:{cid}")])
+
         if len(contacts) == per_page:
             buttons.append([InlineKeyboardButton(text="➡️ Следующая страница", callback_data="contacts_page:next")])
+
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
         await dest_message.answer("Обращения:", reply_markup=kb)
         print("[Contacts] Список обращений отправлен")
+
     except Exception as e:
         await dest_message.answer(f"Ошибка при получении обращений: <code>{e}</code>")
         print("[Contacts ERROR]", e)
     finally:
         await safe_close(conn)
 
+# Обработчик для списка обращений
 @router.callback_query(lambda q: q.data == "admin_contacts_list")
 async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMContext):
     await send_contacts_list_to_admin(query.message, state)
     await query.answer()
 
+# Обработчик навигации по страницам списка обращений
 @router.callback_query(lambda q: q.data and q.data.startswith("contacts_page:"))
 async def contacts_page_nav(query: types.CallbackQuery, state: FSMContext):
     direction = query.data.split(":", 1)[1]
@@ -175,6 +187,7 @@ async def contacts_page_nav(query: types.CallbackQuery, state: FSMContext):
     await send_contacts_list_to_admin(query.message, state)
     await query.answer()
 
+# Обработчик для выбора обращения и отображения его деталей
 @router.callback_query(lambda q: q.data and q.data.startswith("contact_reply:"))
 async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
     cid_str = query.data.split(":", 1)[1]
@@ -183,25 +196,44 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
     except ValueError:
         await query.answer("Неверные данные.", show_alert=True)
         return
+
     await state.update_data(contact_reply_id=cid)
     conn = await get_connection()
     try:
         async with conn.cursor(DictCursor) as cur:
             await cur.execute("SELECT * FROM contacts WHERE id = %s", (cid,))
             contact = await cur.fetchone()
+
         if contact:
+            full_name = contact.get("full_name", "-")
+            username = contact.get("username", "-")
+            author_info = f"{full_name} (@{username})"
             original_text = contact.get("message") or "Нет текста обращения."
-            await query.message.answer(f"📨 Исходное обращение:\n\n{original_text}\n\nВведите ваш ответ:")
+
+            await query.message.answer(f"📨 Исходное обращение от {author_info}:\n\n{original_text}\n\nВведите ваш ответ:")
+
+            if contact.get("content_type") == "photo":
+                await query.message.bot.send_photo(query.message.chat.id, contact["content"], caption=original_text)
+            elif contact.get("content_type") == "video":
+                await query.message.bot.send_video(query.message.chat.id, contact["content"], caption=original_text)
+            elif contact.get("content_type") == "voice":
+                await query.message.bot.send_voice(query.message.chat.id, contact["content"], caption=original_text)
+            elif contact.get("content_type") == "document":
+                await query.message.bot.send_document(query.message.chat.id, contact["content"], caption=original_text)
+
         else:
             await query.message.answer("Обращение не найдено.")
+
     except Exception as e:
         await query.message.answer(f"Ошибка при получении обращения: <code>{e}</code>")
         print("[Contacts ERROR]", e)
     finally:
         await safe_close(conn)
+
     await state.set_state(ContactReplyState.waiting_for_reply)
     await query.answer("Ожидается ваш ответ.")
 
+# Обработчик ответа администрации на обращение
 @router.message(ContactReplyState.waiting_for_reply)
 async def process_contact_reply(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -210,32 +242,40 @@ async def process_contact_reply(message: Message, state: FSMContext):
         await message.answer("Ошибка: обращение не выбрано.")
         await state.clear()
         return
+
     conn = await get_connection()
     try:
         async with conn.cursor() as cur:
             await cur.execute("UPDATE contacts SET answered = TRUE WHERE id = %s", (cid,))
             await conn.commit()
+
         async with conn.cursor(DictCursor) as cur:
             await cur.execute("SELECT * FROM contacts WHERE id = %s", (cid,))
             contact = await cur.fetchone()
+
         if not contact:
             await message.answer("Обращение не найдено.")
             await state.clear()
             return
+
         target_id = contact.get("tg_id")
         if not target_id:
             await message.answer("Ошибка: отсутствует tg_id.")
             await state.clear()
             return
+
+        author_info = f"{contact.get('full_name', '-')}" + (f" (@{contact.get('username', '-')})" if contact.get("username") else "")
         original_text = contact.get("message") or "Нет текста обращения."
-        author_info = f"{contact.get('full_name','-')}" + (f" (@{contact.get('username','-')})" if contact.get("username") else "")
         header = f"Ваше обращение от {author_info}:\n\n{original_text}\n\nОтвет от администрации:"
+
         if message.content_type == "text":
             await message.bot.send_message(target_id, header + "\n\n" + message.text)
         else:
             await message.bot.send_message(target_id, header + "\n\nОтвет ниже:")
             await message.bot.copy_message(chat_id=target_id, from_chat_id=message.chat.id, message_id=message.message_id)
+
         await message.answer("Ответ отправлен пользователю.")
+
     except Exception as e:
         await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
         print("[Contacts ERROR при ответе]", e)

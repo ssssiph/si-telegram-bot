@@ -126,6 +126,7 @@ async def admin_panel(message: Message, state: FSMContext):
         await safe_close(conn)
 
 # Обращения
+# Обращения
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Contacts] Запрос списка обращений")
     conn = await get_connection()
@@ -207,19 +208,19 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
             author_info = f"{full_name} (@{username})"
             original_text = contact.get("message") or "Нет текста обращения."
 
-            await query.message.answer(f"📨 Исходное обращение от {author_info}:\n\n{original_text}\n\nВведите ваш ответ:")
+            await query.message.answer(f"📨 Исходное обращение от {author_info}:\n\n{original_text}")
 
             # Пересылаем медиа, если оно есть
             media_type = contact.get("content_type")
             message_id = contact.get("message_id")
 
             if media_type in ["photo", "video", "voice", "document"]:
+                await query.message.answer(f"📩 Медиа от {author_info}:")
                 await query.message.bot.copy_message(
                     chat_id=query.message.chat.id,
                     from_chat_id=contact["tg_id"],
                     message_id=message_id
                 )
-                await query.message.answer(f"📩 Медиа от {author_info}")
 
         else:
             await query.message.answer("Обращение не найдено.")

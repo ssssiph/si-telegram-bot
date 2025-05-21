@@ -209,18 +209,17 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
 
             await query.message.answer(f"📨 Исходное обращение от {author_info}:\n\n{original_text}\n\nВведите ваш ответ:")
 
-            # Отправляем медиа, если оно есть
+            # Пересылаем медиа, если оно есть
             media_type = contact.get("content_type")
-            media_id = contact.get("content")
+            message_id = contact.get("message_id")
 
-            if media_type == "photo":
-                await query.message.bot.send_photo(query.message.chat.id, media_id, caption=f"📷 Фото от {author_info}")
-            elif media_type == "video":
-                await query.message.bot.send_video(query.message.chat.id, media_id, caption=f"🎥 Видео от {author_info}")
-            elif media_type == "voice":
-                await query.message.bot.send_voice(query.message.chat.id, media_id, caption=f"🎙️ Голосовое сообщение от {author_info}")
-            elif media_type == "document":
-                await query.message.bot.send_document(query.message.chat.id, media_id, caption=f"📄 Файл от {author_info}")
+            if media_type in ["photo", "video", "voice", "document"]:
+                await query.message.bot.copy_message(
+                    chat_id=query.message.chat.id,
+                    from_chat_id=contact["tg_id"],
+                    message_id=message_id
+                )
+                await query.message.answer(f"📩 Медиа от {author_info}")
 
         else:
             await query.message.answer("Обращение не найдено.")

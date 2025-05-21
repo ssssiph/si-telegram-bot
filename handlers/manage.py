@@ -165,18 +165,16 @@ async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
         print("[Contacts] Список обращений отправлен")
 
     except Exception as e:
-        await dest_message.answer(f"Ошибка при получении обращений: <code>{e}</code>")
+        await dest_message.answer(f"Ошибка при получении обращений: {e}")
         print("[Contacts ERROR]", e)
     finally:
         await safe_close(conn)
 
-# Обработчик для списка обращений
 @router.callback_query(lambda q: q.data == "admin_contacts_list")
 async def admin_contacts_list_callback(query: types.CallbackQuery, state: FSMContext):
     await send_contacts_list_to_admin(query.message, state)
     await query.answer()
 
-# Обработчик навигации по страницам списка обращений
 @router.callback_query(lambda q: q.data and q.data.startswith("contacts_page:"))
 async def contacts_page_nav(query: types.CallbackQuery, state: FSMContext):
     direction = query.data.split(":", 1)[1]
@@ -187,7 +185,6 @@ async def contacts_page_nav(query: types.CallbackQuery, state: FSMContext):
     await send_contacts_list_to_admin(query.message, state)
     await query.answer()
 
-# Обработчик для выбора обращения и отображения его деталей
 @router.callback_query(lambda q: q.data and q.data.startswith("contact_reply:"))
 async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
     cid_str = query.data.split(":", 1)[1]
@@ -212,20 +209,24 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
 
             await query.message.answer(f"📨 Исходное обращение от {author_info}:\n\n{original_text}\n\nВведите ваш ответ:")
 
-            if contact.get("content_type") == "photo":
-                await query.message.bot.send_photo(query.message.chat.id, contact["content"], caption=original_text)
-            elif contact.get("content_type") == "video":
-                await query.message.bot.send_video(query.message.chat.id, contact["content"], caption=original_text)
-            elif contact.get("content_type") == "voice":
-                await query.message.bot.send_voice(query.message.chat.id, contact["content"], caption=original_text)
-            elif contact.get("content_type") == "document":
-                await query.message.bot.send_document(query.message.chat.id, contact["content"], caption=original_text)
+            # Отправляем медиа, если оно есть
+            media_type = contact.get("content_type")
+            media_id = contact.get("content")
+
+            if media_type == "photo":
+                await query.message.bot.send_photo(query.message.chat.id, media_id, caption=f"📷 Фото от {author_info}")
+            elif media_type == "video":
+                await query.message.bot.send_video(query.message.chat.id, media_id, caption=f"🎥 Видео от {author_info}")
+            elif media_type == "voice":
+                await query.message.bot.send_voice(query.message.chat.id, media_id, caption=f"🎙️ Голосовое сообщение от {author_info}")
+            elif media_type == "document":
+                await query.message.bot.send_document(query.message.chat.id, media_id, caption=f"📄 Файл от {author_info}")
 
         else:
             await query.message.answer("Обращение не найдено.")
 
     except Exception as e:
-        await query.message.answer(f"Ошибка при получении обращения: <code>{e}</code>")
+        await query.message.answer(f"Ошибка при получении обращения: {e}")
         print("[Contacts ERROR]", e)
     finally:
         await safe_close(conn)
@@ -233,7 +234,6 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
     await state.set_state(ContactReplyState.waiting_for_reply)
     await query.answer("Ожидается ваш ответ.")
 
-# Обработчик ответа администрации на обращение
 @router.message(ContactReplyState.waiting_for_reply)
 async def process_contact_reply(message: Message, state: FSMContext):
     data = await state.get_data()

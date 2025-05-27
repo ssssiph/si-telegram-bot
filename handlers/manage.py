@@ -213,12 +213,8 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
             ]
             kb = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-            await query.message.answer(
-                f"📨 Исходное обращение от {author_info}:\n\n{original_text}",
-                reply_markup=kb
-            )
+            await query.message.answer(f"📨 Исходное обращение от {author_info}:\n\n{original_text}", reply_markup=kb)
 
-            # Пересылаем медиа, если оно есть
             media_type = contact.get("content_type")
             message_id = contact.get("message_id")
 
@@ -308,16 +304,15 @@ async def process_contact_reply(message: Message, state: FSMContext):
         original_text = contact.get("message") or "Нет текста обращения."
         header = f"Ваше обращение от {author_info}:\n\n{original_text}\n\nОтвет от администрации:"
 
-        if message.content_type == "text":
-            await message.bot.send_message(target_id, header + "\n\n" + message.text)
-        else:
-            await message.bot.send_message(target_id, header + "\n\nОтвет ниже:")
+        await message.bot.send_message(target_id, header)
+
+        if message.content_type in ["photo", "video", "voice", "document"]:
             await message.bot.copy_message(chat_id=target_id, from_chat_id=message.chat.id, message_id=message.message_id)
 
         await message.answer("Ответ отправлен пользователю.")
 
     except Exception as e:
-        await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
+        await message.answer(f"Ошибка при отправке ответа: {e}")
         print("[Contacts ERROR при ответе]", e)
     finally:
         await state.clear()

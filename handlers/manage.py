@@ -202,9 +202,10 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
             contact = await cur.fetchone()
 
         if contact:
+            tg_id = contact.get("tg_id")
             full_name = contact.get("full_name", "-")
             username = contact.get("username", "-")
-            author_info = f"{full_name} (@{username})"
+            author_info = f"{full_name} (@{username}) | ID: {tg_id}"
             original_text = contact.get("message") or "Нет текста обращения."
 
             buttons = [
@@ -220,11 +221,7 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
 
             if media_type in [ContentType.PHOTO, ContentType.VIDEO, ContentType.VOICE, ContentType.DOCUMENT]:
                 await query.message.answer(f"📩 Медиа от {author_info}:")
-                await query.message.bot.copy_message(
-                    chat_id=query.message.chat.id,
-                    from_chat_id=contact["tg_id"],
-                    message_id=message_id
-                )
+                await query.message.bot.copy_message(chat_id=query.message.chat.id, from_chat_id=tg_id, message_id=message_id)
 
         else:
             await query.message.answer("Обращение не найдено.")
@@ -281,10 +278,6 @@ async def process_contact_reply(message: Message, state: FSMContext):
 
     conn = await get_connection()
     try:
-        async with conn.cursor() as cur:
-            await cur.execute("UPDATE contacts SET answered = TRUE WHERE id = %s", (cid,))
-            await conn.commit()
-
         async with conn.cursor(DictCursor) as cur:
             await cur.execute("SELECT * FROM contacts WHERE id = %s", (cid,))
             contact = await cur.fetchone()
@@ -300,16 +293,18 @@ async def process_contact_reply(message: Message, state: FSMContext):
             await state.clear()
             return
 
-        author_info = f"{contact.get('full_name', '-')}" + (f" (@{contact.get('username', '-')})" if contact.get("username") else "")
+        full_name = contact.get("full_name", "-")
+        username = contact.get("username", "-")
+        author_info = f"{full_name} (@{username}) | ID: {target_id}"
         original_text = contact.get("message") or "Нет текста обращения."
         header = f"Ваше обращение от {author_info}:\n\n{original_text}\n\nОтвет от администрации:"
 
         await message.bot.send_message(target_id, header)
 
-        if message.content_type in ["photo", "video", "voice", "document"]:
+        if message.content_type in [ContentType.PHOTO, ContentType.VIDEO, ContentType.VOICE, ContentType.DOCUMENT]:
             await message.bot.copy_message(chat_id=target_id, from_chat_id=message.chat.id, message_id=message.message_id)
 
-        await message.answer("Ответ отправлен пользователю.")
+        await message.answer("✅ Ответ отправлен пользователю.")
 
     except Exception as e:
         await message.answer(f"Ошибка при отправке ответа: {e}")

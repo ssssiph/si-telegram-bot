@@ -218,7 +218,7 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
             media_type = contact.get("content_type")
             message_id = contact.get("message_id")
 
-            if media_type in ["photo", "video", "voice", "document"]:
+            if media_type in [ContentType.PHOTO, ContentType.VIDEO, ContentType.VOICE, ContentType.DOCUMENT]:
                 await query.message.answer(f"📩 Медиа от {author_info}:")
                 await query.message.bot.copy_message(
                     chat_id=query.message.chat.id,

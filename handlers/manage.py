@@ -1,7 +1,7 @@
 import os
 import json
 from aiogram import Router, types, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, ContentType
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiomysql import DictCursor
@@ -202,10 +202,9 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
             contact = await cur.fetchone()
 
         if contact:
-            tg_id = contact.get("tg_id")
             full_name = contact.get("full_name", "-")
             username = contact.get("username", "-")
-            author_info = f"{full_name} (@{username}) | ID: {tg_id}"
+            author_info = f"{full_name} (@{username})"
             original_text = contact.get("message") or "Нет текста обращения."
 
             buttons = [
@@ -214,14 +213,22 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
             ]
             kb = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-            await query.message.answer(f"📨 Исходное обращение от {author_info}:\n\n{original_text}", reply_markup=kb)
+            await query.message.answer(
+                f"📨 Исходное обращение от {author_info}:\n\n{original_text}",
+                reply_markup=kb
+            )
 
+            # Пересылаем медиа, если оно есть
             media_type = contact.get("content_type")
             message_id = contact.get("message_id")
 
-            if media_type in [ContentType.PHOTO, ContentType.VIDEO, ContentType.VOICE, ContentType.DOCUMENT]:
+            if media_type in ["photo", "video", "voice", "document"]:
                 await query.message.answer(f"📩 Медиа от {author_info}:")
-                await query.message.bot.copy_message(chat_id=query.message.chat.id, from_chat_id=tg_id, message_id=message_id)
+                await query.message.bot.copy_message(
+                    chat_id=query.message.chat.id,
+                    from_chat_id=contact["tg_id"],
+                    message_id=message_id
+                )
 
         else:
             await query.message.answer("Обращение не найдено.")
@@ -235,6 +242,38 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
     await state.set_state(ContactReplyState.waiting_for_reply)
     await query.answer("Ожидается ваш ответ.")
 
+@router.callback_query(lambda q: q.data == "cancel_reply")
+async def cancel_reply(query: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await query.message.answer("✖ Ответ отменён.")
+    await query.answer()
+
+@router.callback_query(lambda q: q.data and q.data.startswith("delete_contact:"))
+async def delete_contact(query: types.CallbackQuery, state: FSMContext):
+    cid_str = query.data.split(":", 1)[1]
+    try:
+        cid = int(cid_str)
+    except ValueError:
+        await query.answer("Ошибка: Неверный ID.", show_alert=True)
+        return
+
+    conn = await get_connection()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM contacts WHERE id = %s", (cid,))
+            await conn.commit()
+
+        await query.message.answer("🗑 Обращение удалено.")
+        await send_contacts_list_to_admin(query.message, state)
+
+    except Exception as e:
+        await query.message.answer(f"Ошибка при удалении обращения: {e}")
+        print("[Contacts ERROR при удалении]", e)
+    finally:
+        await safe_close(conn)
+
+    await query.answer()
+
 @router.message(ContactReplyState.waiting_for_reply)
 async def process_contact_reply(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -246,6 +285,10 @@ async def process_contact_reply(message: Message, state: FSMContext):
 
     conn = await get_connection()
     try:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE contacts SET answered = TRUE WHERE id = %s", (cid,))
+            await conn.commit()
+
         async with conn.cursor(DictCursor) as cur:
             await cur.execute("SELECT * FROM contacts WHERE id = %s", (cid,))
             contact = await cur.fetchone()
@@ -261,21 +304,20 @@ async def process_contact_reply(message: Message, state: FSMContext):
             await state.clear()
             return
 
-        full_name = contact.get("full_name", "-")
-        username = contact.get("username", "-")
-        author_info = f"{full_name} (@{username}) | ID: {target_id}"
+        author_info = f"{contact.get('full_name', '-')}" + (f" (@{contact.get('username', '-')})" if contact.get("username") else "")
         original_text = contact.get("message") or "Нет текста обращения."
         header = f"Ваше обращение от {author_info}:\n\n{original_text}\n\nОтвет от администрации:"
 
-        await message.bot.send_message(target_id, header)
-
-        if message.content_type in [ContentType.PHOTO, ContentType.VIDEO, ContentType.VOICE, ContentType.DOCUMENT]:
+        if message.content_type == "text":
+            await message.bot.send_message(target_id, header + "\n\n" + message.text)
+        else:
+            await message.bot.send_message(target_id, header + "\n\nОтвет ниже:")
             await message.bot.copy_message(chat_id=target_id, from_chat_id=message.chat.id, message_id=message.message_id)
 
-        await message.answer("✅ Ответ отправлен пользователю.")
+        await message.answer("Ответ отправлен пользователю.")
 
     except Exception as e:
-        await message.answer(f"Ошибка при отправке ответа: {e}")
+        await message.answer(f"Ошибка при отправке ответа: <code>{e}</code>")
         print("[Contacts ERROR при ответе]", e)
     finally:
         await state.clear()

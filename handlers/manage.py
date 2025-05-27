@@ -207,7 +207,16 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
             author_info = f"{full_name} (@{username})"
             original_text = contact.get("message") or "Нет текста обращения."
 
-            await query.message.answer(f"📨 Исходное обращение от {author_info}:\n\n{original_text}")
+            buttons = [
+                [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_reply")],
+                [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_contact:{cid}")]
+            ]
+            kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+            await query.message.answer(
+                f"📨 Исходное обращение от {author_info}:\n\n{original_text}",
+                reply_markup=kb
+            )
 
             # Пересылаем медиа, если оно есть
             media_type = contact.get("content_type")
@@ -232,6 +241,38 @@ async def contact_reply_select(query: types.CallbackQuery, state: FSMContext):
 
     await state.set_state(ContactReplyState.waiting_for_reply)
     await query.answer("Ожидается ваш ответ.")
+
+@router.callback_query(lambda q: q.data == "cancel_reply")
+async def cancel_reply(query: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await query.message.answer("✖ Ответ отменён.")
+    await query.answer()
+
+@router.callback_query(lambda q: q.data and q.data.startswith("delete_contact:"))
+async def delete_contact(query: types.CallbackQuery, state: FSMContext):
+    cid_str = query.data.split(":", 1)[1]
+    try:
+        cid = int(cid_str)
+    except ValueError:
+        await query.answer("Ошибка: Неверный ID.", show_alert=True)
+        return
+
+    conn = await get_connection()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM contacts WHERE id = %s", (cid,))
+            await conn.commit()
+
+        await query.message.answer("🗑 Обращение удалено.")
+        await send_contacts_list_to_admin(query.message, state)
+
+    except Exception as e:
+        await query.message.answer(f"Ошибка при удалении обращения: {e}")
+        print("[Contacts ERROR при удалении]", e)
+    finally:
+        await safe_close(conn)
+
+    await query.answer()
 
 @router.message(ContactReplyState.waiting_for_reply)
 async def process_contact_reply(message: Message, state: FSMContext):

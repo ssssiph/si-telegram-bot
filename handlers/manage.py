@@ -126,7 +126,6 @@ async def admin_panel(message: Message, state: FSMContext):
         await safe_close(conn)
 
 # Обращения
-# Обращения
 async def send_contacts_list_to_admin(dest_message: Message, state: FSMContext):
     print("[Contacts] Запрос списка обращений")
     conn = await get_connection()
@@ -614,7 +613,7 @@ async def send_users_list_to_admin(dest_message: Message, state: FSMContext):
                 internal_id = user.get("internal_id", "N/A")
                 if internal_id is None:
                     internal_id = tg_id
-                btn_text = f"{internal_id} • {full_name} (@{username}) | {rank}"
+                btn_text = f"{tg_id} • {full_name} (@{username}) | {rank}"
                 buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"user_manage:{tg_id}")])
             if len(users) == per_page:
                 buttons.append([InlineKeyboardButton(text="➡️ Следующая страница", callback_data="users_page:next")])
@@ -671,7 +670,7 @@ async def user_manage_callback(query: types.CallbackQuery, state: FSMContext):
             buttons.append([InlineKeyboardButton(text="🚫 Заблокировать", callback_data=f"user_toggle_block:{tg_id}")])
         buttons.append([InlineKeyboardButton(text="↩️ Назад", callback_data="admin_users_list")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-        details = (f"ID: {user.get('internal_id', 'N/A')}\n"
+        details = (f"ID: {user.get('tg_id', 'N/A')}\n"
                    f"Пользователь: {user.get('full_name')} (@{user.get('username')})\n"
                    f"Ранг: {user.get('rank')}\n"
                    f"Алмазы: {user.get('balance', 0)}\n"

@@ -613,7 +613,7 @@ async def send_users_list_to_admin(dest_message: Message, state: FSMContext):
                 rank = user.get("rank") or "-"
                 internal_id = user.get("internal_id", "N/A")
                 if internal_id is None:
-                internal_id = tg_id
+                    internal_id = tg_id
                 btn_text = f"{internal_id} • {full_name} (@{username}) | {rank}"
                 buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"user_manage:{tg_id}")])
             if len(users) == per_page:
